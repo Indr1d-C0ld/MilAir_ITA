@@ -1,0 +1,15 @@
+[Unit]
+Description=ADS-B Military Logger
+After=network.target
+
+[Service]
+ExecStart=/usr/bin/python3 /var/www/html/milair_ita/flight_mil_ita.py --interval 60 --csv /var/www/html/milair_ita/mil.csv --polygons-file /var/www/html/milair_ita/polygons.json
+WorkingDirectory=/var/www/html/milair_ita
+# Sostituisci con l'utente di sistema proprietario dei file dell'app
+# (lo stesso indicato in fix_permissions.sh).
+User=CHANGEME
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,25 @@
+# Nega l'accesso diretto ai file contenenti le API key (mai serviti al browser,
+# usati solo lato server via require_once)
+<FilesMatch "^(map_secrets|geo_secrets)\.php$">
+    Require all denied
+</FilesMatch>
+
+# Nega l'accesso all'intera cartella cache/ (tile satellite/meteo cache lato
+# server, mai acceduta direttamente dal browser: si passa sempre per i proxy
+# satellite_tile.php/weather_tile.php)
+RewriteEngine On
+RewriteRule ^cache/ - [F,L]
+
+# Nega l'accesso diretto a dati grezzi/export/backup nel web root (usati solo
+# da script server-side o Python, oppure generati come download dinamico con
+# Content-Disposition — mai pensati per essere serviti come file statici)
+<FilesMatch "\.(json|csv|bak)$">
+    Require all denied
+</FilesMatch>
+
+# Nega l'accesso diretto ai database SQLite (auth.db/events.db/news.db e i loro
+# eventuali file collaterali .db-shm/.db-wal) — contengono dati sensibili
+# (hash delle password inclusi) e vanno acceduti solo lato server via PHP.
+<FilesMatch "\.db(-shm|-wal|-journal)?$">
+    Require all denied
+</FilesMatch>

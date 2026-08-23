@@ -1,0 +1,26 @@
+# Ogni 5 minuti importa il CSV nel DB MilAir ITA:
+*/5 * * * * /usr/bin/python3 /var/www/html/milair_ita/csv_to_db.py >> /var/www/html/milair_ita/import.log 2>&1
+
+# Ogni ora aggiorna la cache della rarità contatti database MilAir ITA:
+0 * * * * /usr/bin/php /var/www/html/milair_ita/update_rarity.php >> /var/www/html/milair_ita/rarity.log 2>&1
+
+# Ogni 6 ore scarica le silhouettes mancanti per il database MilAir ITA:
+0 */6 * * * /usr/bin/php /var/www/html/milair_ita/download_silhouettes.php >> /var/www/html/milair_ita/silhouettes.log 2>&1
+
+# Ogni 6 ore scarica le foto generiche mancanti per i modelli presenti nel database MilAir ITA:
+0 */6 * * * /usr/bin/php /var/www/html/milair_ita/download_photos.php >> /var/www/html/milair_ita/photos.log 2>&1
+
+# Ogni 6 ore scarica i disegni tecnici mancanti per i modelli presenti nel database MilAir ITA:
+0 */6 * * * /usr/bin/php /var/www/html/milair_ita/download_drawings.php >> /var/www/html/milair_ita/drawings.log 2>&1
+
+# Ogni 6 ore scarica le foto mancanti dei veicoli reali da FlightDB, per MilAir ITA: 
+0 */6 * * * /usr/bin/php /var/www/html/milair_ita/download_fdb_photos.php >> /var/www/html/milair_ita/fdbphotos.log 2>&1
+
+# Aggiorna informazioni NOTAMS per mappa MilAir ITA:
+0 */3 * * * /usr/bin/php /var/www/html/milair_ita/fetch_notams.php >> /var/www/html/milair_ita/notams.log 2>&1
+
+# Ogni 5 minuti scansiona i nuovi eventi per generare alert (watchlist, squawk di emergenza, contatti rari):
+*/5 * * * * /usr/bin/php /var/www/html/milair_ita/alert_scan.php >> /var/www/html/milair_ita/alerts.log 2>&1
+
+# Ogni 15 minuti scarica i nuovi articoli dalle fonti RSS/Atom configurate:
+*/15 * * * * /usr/bin/php /var/www/html/milair_ita/fetch_news.php >> /var/www/html/milair_ita/news_fetch.log 2>&1

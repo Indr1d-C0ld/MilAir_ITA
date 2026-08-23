@@ -1,0 +1,477 @@
+/* =========================================
+   MILAIR ITA – ADS‑B Military Tracker
+   Stile sobrio, professionale, responsive
+   ========================================= */
+
+/* ---------- Reset di base ---------- */
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  font-family: 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+  background-color: #f8f9fa;
+  color: #212529;
+  line-height: 1.6;
+  padding: 20px;
+}
+
+/* ---------- Intestazioni ---------- */
+h2 {
+  font-size: 1.8rem;
+  margin-bottom: 15px;
+  color: #343a40;
+  border-bottom: 2px solid #007bff;
+  display: inline-block;
+  padding-bottom: 5px;
+}
+
+h3 {
+  font-size: 1.3rem;
+  margin: 25px 0 10px;
+  color: #495057;
+}
+
+/* ---------- Navigazione ---------- */
+.nav-links {
+  background: #ffffff;
+  padding: 8px 12px;
+  border-radius: 8px;
+  box-shadow: 0 2px 5px rgba(0,0,0,0.05);
+  margin-bottom: 25px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 4px;
+  flex-wrap: wrap;
+  font-size: 0.8rem;
+}
+.nav-links a {
+  text-decoration: none;
+  font-weight: 500;
+  color: #007bff;
+  padding: 4px 7px;
+  border-radius: 5px;
+  white-space: nowrap;
+  transition: background 0.2s, color 0.2s;
+}
+.nav-links a:hover {
+  background: #007bff;
+  color: #fff;
+}
+.nav-links-primary {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 2px;
+}
+.nav-links-secondary {
+  display: flex;
+  flex-wrap: nowrap;
+  align-items: center;
+  gap: 5px;
+  flex-shrink: 0;
+  margin-left: auto;
+}
+
+/* ---------- Campanella notifiche (alerts) ---------- */
+.alert-bell-wrap {
+  position: relative;
+  display: inline-block;
+  padding-right: 7px;
+  margin-right: 1px;
+  border-right: 1px solid rgba(0,0,0,0.12);
+}
+.alert-bell {
+  background: none;
+  border: none;
+  font-size: 0.95rem;
+  cursor: pointer;
+  padding: 3px 6px;
+  border-radius: 5px;
+  position: relative;
+  vertical-align: middle;
+}
+.alert-bell:hover {
+  background: #f1f3f5;
+}
+.alert-badge {
+  position: absolute;
+  top: -2px;
+  right: 0px;
+  background: #dc3545;
+  color: #fff;
+  font-size: 0.65rem;
+  font-weight: bold;
+  border-radius: 10px;
+  padding: 1px 5px;
+  min-width: 15px;
+  line-height: 1.4;
+  text-align: center;
+}
+.alert-dropdown {
+  position: absolute;
+  top: 100%;
+  right: 0;
+  margin-top: 6px;
+  width: 300px;
+  max-width: 90vw;
+  max-height: 400px;
+  overflow-y: auto;
+  background: #fff;
+  border-radius: 8px;
+  box-shadow: 0 4px 20px rgba(0,0,0,0.2);
+  z-index: 3000;
+  display: none;
+  text-align: left;
+  font-family: 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+}
+.alert-dropdown.open {
+  display: block;
+}
+.alert-dropdown-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 8px 12px;
+  border-bottom: 1px solid #e9ecef;
+  font-weight: 600;
+  font-size: 0.85rem;
+  color: #343a40;
+}
+.alert-dropdown-header button {
+  background: none;
+  border: none;
+  color: #007bff;
+  cursor: pointer;
+  font-size: 0.85rem;
+  line-height: 1;
+  padding: 2px 5px;
+  border-radius: 4px;
+}
+.alert-dropdown-header button:hover {
+  background: #f1f3f5;
+}
+.alert-item {
+  padding: 8px 12px;
+  border-bottom: 1px solid #f1f3f5;
+  font-size: 0.78rem;
+}
+.alert-item.unread {
+  background: #eaf4ff;
+}
+.alert-item .alert-title {
+  font-weight: 500;
+  color: #212529;
+  margin-bottom: 2px;
+}
+.alert-item .alert-title a {
+  color: inherit;
+  text-decoration: none;
+}
+.alert-item .alert-title a:hover {
+  text-decoration: underline;
+}
+.alert-item .alert-meta {
+  color: #6c757d;
+  font-size: 0.68rem;
+}
+.alert-item .alert-actions {
+  margin-top: 3px;
+}
+.alert-item .alert-actions button {
+  background: none;
+  border: none;
+  color: #007bff;
+  cursor: pointer;
+  font-size: 0.7rem;
+  padding: 0;
+}
+.alert-dropdown-footer {
+  padding: 6px 12px;
+  text-align: center;
+  border-top: 1px solid #e9ecef;
+}
+.alert-dropdown-footer a {
+  color: #007bff;
+  text-decoration: none;
+  font-size: 0.78rem;
+  font-weight: 500;
+}
+.alert-empty {
+  padding: 20px 12px;
+  text-align: center;
+  color: #6c757d;
+  font-size: 0.78rem;
+}
+
+/* ---------- Barra dei filtri ---------- */
+.filter-bar {
+  background: #ffffff;
+  padding: 20px;
+  border-radius: 8px;
+  box-shadow: 0 2px 5px rgba(0,0,0,0.05);
+  margin-bottom: 25px;
+}
+.filter-bar form {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+}
+.filter-bar label {
+  font-weight: 500;
+  margin-right: 5px;
+}
+.filter-bar input[type="date"],
+.filter-bar input[type="text"] {
+  padding: 8px 12px;
+  border: 1px solid #ced4da;
+  border-radius: 4px;
+  font-size: 0.9rem;
+}
+.filter-bar button,
+.filter-bar .btn {
+  background: #007bff;
+  color: white;
+  border: none;
+  padding: 8px 16px;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 0.9rem;
+  text-decoration: none;
+  display: inline-block;
+  transition: background 0.2s;
+}
+.filter-bar button:hover,
+.filter-bar .btn:hover {
+  background: #0056b3;
+}
+
+.quick-buttons {
+  display: flex;
+  gap: 8px;
+  margin-top: 10px;
+  flex-wrap: wrap;
+}
+.quick-buttons .btn {
+  background: #6c757d;
+}
+.quick-buttons .btn:hover {
+  background: #5a6268;
+}
+
+/* ---------- Pulsanti generici ---------- */
+.btn {
+  background: #007bff;
+  color: white;
+  padding: 8px 16px;
+  border-radius: 4px;
+  text-decoration: none;
+  font-size: 0.9rem;
+  display: inline-block;
+  border: none;
+  cursor: pointer;
+  transition: background 0.2s;
+}
+.btn:hover {
+  background: #0056b3;
+}
+
+/* ---------- Tabella ---------- */
+table {
+  width: 100%;
+  border-collapse: collapse;
+  background: white;
+  border-radius: 8px;
+  overflow: hidden;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.05);
+  margin: 20px 0;
+}
+th, td {
+  padding: 10px 12px;
+  text-align: left;
+  border-bottom: 1px solid #e9ecef;
+  font-size: 0.9rem;
+}
+th {
+  background: #f1f3f5;
+  font-weight: 600;
+  color: #495057;
+}
+tr:last-child td {
+  border-bottom: none;
+}
+tr:hover td {
+  background: #f8f9fa;
+}
+
+/* Colori rarità (già definiti, ma li centralizziamo) */
+.rarity-Mythic    { color: #dc3545; font-weight: bold; }
+.rarity-Legendary { color: #ff8c00; font-weight: bold; }
+.rarity-Epic      { color: #6f42c1; font-weight: bold; }
+.rarity-Rare      { color: #007bff; font-weight: bold; }
+.rarity-Uncommon  { color: #28a745; }
+.rarity-Common    { color: #212529; }
+
+/* ---------- Paginazione ---------- */
+.pagination {
+  margin: 20px 0;
+  display: flex;
+  gap: 5px;
+  flex-wrap: wrap;
+}
+.pagination a {
+  padding: 6px 12px;
+  background: #e9ecef;
+  color: #007bff;
+  border-radius: 4px;
+  text-decoration: none;
+  transition: background 0.2s;
+}
+.pagination a:hover {
+  background: #007bff;
+  color: white;
+}
+
+/* ---------- Canvas dei grafici (stats) ---------- */
+/* :not(.leaflet-layer) esclude i canvas gestiti internamente da Leaflet (es.
+   il layer heatmap di heatmap.php) — Leaflet calcola dimensioni/posizione di
+   quei canvas in pixel via JS, e queste regole (pensate per i grafici
+   Chart.js) li romperebbero: sfondo bianco che nasconde la mappa sottostante,
+   padding/margin che disallineano il posizionamento assoluto calcolato da Leaflet. */
+canvas:not(.leaflet-layer) {
+  background: white;
+  border-radius: 8px;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.05);
+  margin-bottom: 25px;
+  padding: 15px;
+  max-width: 100%;
+}
+
+/* ---------- Mappa e heatmap (overlay) ---------- */
+body.map-page,
+body.heatmap-page {
+  padding: 0;   /* le mappe occupano tutta la finestra */
+}
+#map {
+  height: 100vh;
+  width: 100%;
+}
+
+/* Navbar sovrapposta per mappe */
+.map-nav {
+  position: absolute;
+  top: 10px;
+  left: 10px;
+  z-index: 1000;
+  background: rgba(255,255,255,0.95);
+  padding: 10px 15px;
+  border-radius: 8px;
+  box-shadow: 0 2px 10px rgba(0,0,0,0.2);
+  display: flex;
+  gap: 12px;
+}
+.map-nav a {
+  color: #007bff;
+  font-weight: 500;
+  text-decoration: none;
+}
+.map-nav a:hover {
+  text-decoration: underline;
+}
+
+/* ---------- Stampa (esportazione PDF) ---------- */
+@media print {
+  body {
+    background: white;
+    padding: 0;
+  }
+  .nav-links, .filter-bar, .quick-buttons, .pagination, .btn, .alert-bell-wrap {
+    display: none;
+  }
+  table {
+    box-shadow: none;
+    border: 1px solid #000;
+  }
+}
+
+/* Contenitore per lo scroll orizzontale delle tabelle larghe: attivo a
+   qualunque larghezza (non solo mobile). Su un monitor abbastanza largo da
+   contenere la tabella non cambia nulla (nessuno scroll necessario); su una
+   finestra desktop stretta o su mobile evita che sia l'intera pagina a
+   scorrere lateralmente invece della sola tabella. */
+.table-scroll {
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+/* ---------- Adattamento mobile/tablet ---------- */
+/* Tutto qui dentro è scoped alla media query: sotto i 768px logici, mai sopra
+   — la resa desktop non viene toccata da nessuna di queste regole. */
+@media (max-width: 768px) {
+  body {
+    padding: 10px;
+  }
+
+  .nav-links {
+    justify-content: center;
+    gap: 8px;
+    padding: 10px 12px;
+  }
+  .nav-links-primary {
+    justify-content: center;
+    gap: 4px 8px;
+  }
+  .nav-links-secondary {
+    margin-left: 0;
+    flex-wrap: wrap;
+    justify-content: center;
+  }
+  .nav-links a {
+    padding: 6px 10px;
+    font-size: 0.85rem;
+  }
+
+  .filter-bar form {
+    flex-direction: column;
+    align-items: stretch;
+  }
+  .filter-bar label {
+    margin-right: 0;
+  }
+  .filter-bar input[type="date"],
+  .filter-bar input[type="text"],
+  .filter-bar select {
+    width: 100%;
+  }
+  .filter-bar button,
+  .filter-bar .btn {
+    width: 100%;
+    text-align: center;
+  }
+
+  .table-scroll table {
+    min-width: 640px;
+  }
+
+  /* I canvas dei grafici (Chart.js) hanno larghezza fissata via attributo
+     HTML width/height: senza questa regola non si restringono sotto la loro
+     dimensione nativa e forzano il browser mobile ad allargare il viewport.
+     :not(.leaflet-layer) esclude i canvas gestiti da Leaflet (es. l'heatmap),
+     le cui dimensioni sono calcolate in pixel via JS — vedi nota sopra. */
+  canvas:not(.leaflet-layer) {
+    width: 100% !important;
+    height: auto !important;
+  }
+
+  .pagination {
+    justify-content: center;
+  }
+
+  .alert-dropdown {
+    width: 260px;
+  }
+}

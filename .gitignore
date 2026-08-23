@@ -1,0 +1,34 @@
+# === Segreti / chiavi API ===
+# Le versioni .example sono tracciate, i file reali no.
+geo_secrets.php
+map_secrets.php
+
+# === Database (dati operativi/personali, ricreati automaticamente al primo avvio) ===
+*.db
+*.db-shm
+*.db-wal
+*.db-journal
+
+# === Dati grezzi generati a runtime ===
+mil.csv
+*.log
+
+# === Sessioni PHP ===
+sessions/
+
+# === Cache locale (tile satellite/meteo, token OAuth) ===
+cache/
+
+# === Asset scaricati automaticamente dagli script download_*.php (cron) ===
+drawings/
+fdbphotos/
+photos/
+silhouettes/
+
+# === Python ===
+__pycache__/
+*.pyc
+
+# === OS / editor ===
+.DS_Store
+*.swp
