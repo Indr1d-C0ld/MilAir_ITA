@@ -307,6 +307,14 @@ tr:last-child td {
 tr:hover td {
   background: #f8f9fa;
 }
+table a, p a {
+  color: #007bff;
+  text-decoration: none;
+}
+table a:hover, p a:hover {
+  color: #0056b3;
+  text-decoration: underline;
+}
 
 /* Colori rarità (già definiti, ma li centralizziamo) */
 .rarity-Mythic    { color: #dc3545; font-weight: bold; }
