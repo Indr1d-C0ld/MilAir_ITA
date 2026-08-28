@@ -989,12 +989,23 @@ try {
         </div>
     </div>
 
-    <div style="margin: 10px 0;">
+    <div style="margin: 10px 0; display:flex; align-items:center; flex-wrap:wrap; gap:10px;">
         <a href="export.php?format=csv&<?= http_build_query($_GET) ?>" class="btn">Esporta CSV</a>
         <a href="export.php?format=pdf&<?= http_build_query($_GET) ?>" target="_blank" class="btn">Versione stampabile</a>
         <a href="?<?= http_build_query(array_merge($_GET, ['dateview' => $dateView === 'extended' ? 'compact' : 'extended'])) ?>" class="btn" title="Mostra/nascondi separatamente primo e ultimo avvistamento per identità e per hex">
             <?= $dateView === 'extended' ? '📅 Colonne data compatte' : '📅 Separa colonne data' ?>
         </a>
+        <label style="margin-left:auto;font-size:0.9em;display:flex;align-items:center;gap:6px;">
+            🔄 Aggiorna automaticamente:
+            <select id="autoRefreshSelect" onchange="setAutoRefresh(this.value)">
+                <option value="0">Disattivato</option>
+                <option value="30">30 secondi</option>
+                <option value="60">1 minuto</option>
+                <option value="120">2 minuti</option>
+                <option value="300">5 minuti</option>
+            </select>
+        </label>
+        <span id="autoRefreshCountdown" style="color:#6c757d;font-size:0.85em;min-width:3.5em;"></span>
     </div>
 
     <div class="table-scroll">
@@ -1127,6 +1138,8 @@ try {
                         <?php $silhouettePath = getSilhouettePath($row['model_t']); ?>
                         <?php if ($silhouettePath): ?>
                             <img src="<?= htmlspecialchars($silhouettePath) ?>" class="model-silhouette" alt="<?= htmlspecialchars($row['model_t']) ?>" title="<?= htmlspecialchars($row['model_t']) ?>">
+                        <?php elseif ($canEdit): ?>
+                            <a href="#" class="copy-btn" title="Cerca silhouette ora" onclick="fetchAssetNow('silhouette', null, '<?= htmlspecialchars($row['model_t'], ENT_QUOTES) ?>', this); return false;">🔄</a>
                         <?php endif; ?>
                         <a href="https://doc8643.com/aircraft/<?= urlencode($row['model_t']) ?>" target="_blank" title="Apri scheda DOC 8643"><?= htmlspecialchars($row['model_t']) ?></a>
                     <?php else: ?>
@@ -1147,6 +1160,8 @@ try {
                         <a href="<?= htmlspecialchars($fdbPhotoPath) ?>" target="_blank" title="Foto reale di <?= htmlspecialchars($row['hex']) ?>">
                             <img src="<?= htmlspecialchars($fdbPhotoPath) ?>" class="fdb-photo" alt="<?= htmlspecialchars($row['hex']) ?>">
                         </a>
+                    <?php elseif ($canEdit): ?>
+                        <a href="#" class="copy-btn" title="Cerca foto reale ora" onclick="fetchAssetNow('fdb_photo', '<?= htmlspecialchars($row['hex'], ENT_QUOTES) ?>', null, this); return false;">🔄</a>
                     <?php endif; ?>
                 </td>
                 <td class="thumb-col">
@@ -1155,6 +1170,8 @@ try {
                             <a href="<?= htmlspecialchars($modelPhotoPath) ?>" target="_blank" title="Foto di <?= htmlspecialchars($row['model_t']) ?>">
                                 <img src="<?= htmlspecialchars($modelPhotoPath) ?>" class="model-photo" alt="<?= htmlspecialchars($row['model_t']) ?>">
                             </a>
+                        <?php elseif ($canEdit): ?>
+                            <a href="#" class="copy-btn" title="Cerca foto modello ora" onclick="fetchAssetNow('model_photo', null, '<?= htmlspecialchars($row['model_t'], ENT_QUOTES) ?>', this); return false;">🔄</a>
                         <?php endif; ?>
                     <?php endif; ?>
                 </td>
@@ -1164,6 +1181,8 @@ try {
                             <a href="<?= htmlspecialchars($drawingPath) ?>" target="_blank" title="Disegno tecnico di <?= htmlspecialchars($row['model_t']) ?>">
                                 <img src="<?= htmlspecialchars($drawingPath) ?>" class="model-drawing" alt="<?= htmlspecialchars($row['model_t']) ?>">
                             </a>
+                        <?php elseif ($canEdit): ?>
+                            <a href="#" class="copy-btn" title="Cerca disegno tecnico ora" onclick="fetchAssetNow('drawing', null, '<?= htmlspecialchars($row['model_t'], ENT_QUOTES) ?>', this); return false;">🔄</a>
                         <?php endif; ?>
                     <?php endif; ?>
                 </td>
@@ -1448,6 +1467,84 @@ try {
     </script>
 
     <script>
+    // ---------------------------------------------------------------------
+    // Aggiornamento automatico della tabella, con intervallo regolabile
+    // (persistito in localStorage) — in pausa se un modale/popup è aperto,
+    // per non interrompere una modifica in corso.
+    // ---------------------------------------------------------------------
+    let autoRefreshTimer = null;
+    let autoRefreshCountdownTimer = null;
+    let autoRefreshSecondsLeft = 0;
+
+    function isAnyOverlayOpen() {
+        var identityModal = document.getElementById('identityModalBackdrop');
+        var markerPicker = document.getElementById('markerPicker');
+        var alertDropdown = document.getElementById('alertDropdown');
+        return (identityModal && identityModal.classList.contains('open'))
+            || (markerPicker && markerPicker.style.display === 'block')
+            || (alertDropdown && alertDropdown.classList.contains('open'));
+    }
+
+    function setAutoRefresh(seconds) {
+        seconds = parseInt(seconds, 10) || 0;
+        try { localStorage.setItem('milair_autorefresh', seconds); } catch (e) {}
+        clearInterval(autoRefreshTimer);
+        clearInterval(autoRefreshCountdownTimer);
+        var countdownEl = document.getElementById('autoRefreshCountdown');
+        if (seconds <= 0) {
+            countdownEl.textContent = '';
+            return;
+        }
+        autoRefreshSecondsLeft = seconds;
+        autoRefreshCountdownTimer = setInterval(function() {
+            autoRefreshSecondsLeft--;
+            countdownEl.textContent = autoRefreshSecondsLeft > 0 ? '(' + autoRefreshSecondsLeft + 's)' : '';
+        }, 1000);
+        autoRefreshTimer = setInterval(function() {
+            if (isAnyOverlayOpen()) {
+                autoRefreshSecondsLeft = seconds; // rimanda finché il modale resta aperto
+                return;
+            }
+            location.reload();
+        }, seconds * 1000);
+    }
+
+    document.addEventListener('DOMContentLoaded', function() {
+        var select = document.getElementById('autoRefreshSelect');
+        var saved = '0';
+        try { saved = localStorage.getItem('milair_autorefresh') || '0'; } catch (e) {}
+        if (select.querySelector('option[value="' + saved + '"]')) {
+            select.value = saved;
+        }
+        setAutoRefresh(select.value);
+    });
+
+    function fetchAssetNow(type, hex, modelT, el) {
+        var original = el.textContent;
+        el.textContent = '⏳';
+        el.style.pointerEvents = 'none';
+        var csrf = document.querySelector('meta[name="csrf-token"]').content;
+        fetch('fetch_assets_now.php', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/x-www-form-urlencoded'},
+            body: new URLSearchParams({type: type, hex: hex || '', model_t: modelT || '', csrf_token: csrf})
+        })
+        .then(function(r) { return r.json(); })
+        .then(function(data) {
+            if (data.ok) {
+                location.reload();
+            } else {
+                alert('Non trovato: ' + (data.error || 'nessun risultato'));
+                el.textContent = original;
+                el.style.pointerEvents = '';
+            }
+        })
+        .catch(function() {
+            alert('Errore di rete durante la ricerca.');
+            el.textContent = original;
+            el.style.pointerEvents = '';
+        });
+    }
     function copyToClipboard(text) {
         if (navigator.clipboard) {
             navigator.clipboard.writeText(text).catch(function() {
