@@ -8,6 +8,7 @@ require_role('collaboratore');
 $dbPath = __DIR__ . '/events.db';
 $db = new SQLite3($dbPath);
 $db->enableExceptions(true);
+$db->busyTimeout(5000);
 
 $db->exec("CREATE TABLE IF NOT EXISTS country_rules (
     id INTEGER PRIMARY KEY AUTOINCREMENT,

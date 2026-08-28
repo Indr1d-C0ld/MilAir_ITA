@@ -29,6 +29,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['emoji'])) {
         try {
             $db = new SQLite3($dbPath);
             $db->enableExceptions(true);
+            $db->busyTimeout(5000);
             $db->exec("CREATE TABLE IF NOT EXISTS markers (
                 hex TEXT PRIMARY KEY,
                 emoji TEXT

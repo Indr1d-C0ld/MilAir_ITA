@@ -6,6 +6,7 @@ log_access();
 $dbPath = __DIR__ . '/events.db';
 $db = new SQLite3($dbPath, SQLITE3_OPEN_READONLY);
 $db->enableExceptions(true);
+$db->busyTimeout(5000);
 
 // Assicurati che la tabella favorites esista (la crei con toggle_favorite.php o rules.php)
 

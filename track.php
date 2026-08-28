@@ -7,6 +7,7 @@ auth_bootstrap();
 $dbPath = __DIR__ . '/events.db';
 $db = new SQLite3($dbPath, SQLITE3_OPEN_READONLY);
 $db->enableExceptions(true);
+$db->busyTimeout(5000);
 
 header('Content-Type: application/json; charset=utf-8');
 

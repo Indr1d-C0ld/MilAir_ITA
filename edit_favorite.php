@@ -13,6 +13,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $note = $_POST['note'] ?? '';
     $db = new SQLite3($dbPath);
     $db->enableExceptions(true);
+    $db->busyTimeout(5000);
     $db->exec("CREATE TABLE IF NOT EXISTS favorites (hex TEXT PRIMARY KEY, note TEXT, created_at TEXT DEFAULT CURRENT_TIMESTAMP)");
     $stmt = $db->prepare("UPDATE favorites SET note = ? WHERE hex = ?");
     $stmt->bindValue(1, $note);
@@ -23,6 +24,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 }
 
 $db = new SQLite3($dbPath, SQLITE3_OPEN_READONLY);
+$db->busyTimeout(5000);
 $stmt = $db->prepare("SELECT note FROM favorites WHERE hex = ?");
 $stmt->bindValue(1, $hex);
 $res = $stmt->execute()->fetchArray(SQLITE3_ASSOC);

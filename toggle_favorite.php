@@ -37,6 +37,7 @@ if (!$hex) {
 try {
     $db = new SQLite3($dbPath);
     $db->enableExceptions(true);
+    $db->busyTimeout(5000);
     $db->exec("CREATE TABLE IF NOT EXISTS favorites (
         hex TEXT PRIMARY KEY,
         note TEXT,

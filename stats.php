@@ -119,6 +119,7 @@ function st_bar($v, $max, $w = 90) {
 try {
     $db = new SQLite3($dbPath, SQLITE3_OPEN_READONLY);
     $db->enableExceptions(true);
+    $db->busyTimeout(5000);
 
     $eventsExist = $db->querySingle("SELECT name FROM sqlite_master WHERE type='table' AND name='aircraft'");
     if (!$eventsExist) {

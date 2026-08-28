@@ -556,6 +556,7 @@ function pointInRing($lat, $lon, $ring) {
 try {
     $db = new SQLite3($dbPath, SQLITE3_OPEN_READONLY);
     $db->enableExceptions(true);
+    $db->busyTimeout(5000);
 
     // Regole personalizzate per la nazionalità
     $customRules = [];
@@ -812,14 +813,44 @@ try {
         .anom-link { text-decoration: none; margin-left: 4px; font-size: 0.9em; }
         table a { color: #007bff; text-decoration: none; }
         table a:hover { color: #0056b3; text-decoration: none; }
-        .model-silhouette { height: 20px; width: auto; vertical-align: middle; margin-right: 4px; }
+        .model-silhouette { height: 18px; width: auto; vertical-align: middle; margin-right: 4px; }
         .flag-icon { height: 14px; width: auto; vertical-align: middle; margin-right: 4px; }
         .op-logo { height: 13px; width: auto; vertical-align: middle; margin-right: 3px; }
         .operator-badge { display: inline-flex; align-items: center; }
-        .model-photo { height: 35px; width: auto; vertical-align: middle; border-radius: 2px; display: inline-block; margin-right: 4px; }
-        .model-drawing { height: 35px; width: auto; vertical-align: middle; border-radius: 2px; display: inline-block; margin-right: 4px; }
-        .fdb-photo { height: 35px; width: auto; vertical-align: middle; border-radius: 2px; display: inline-block; margin-right: 4px; }
+        .model-photo { height: 26px; width: auto; vertical-align: middle; border-radius: 2px; display: inline-block; margin-right: 4px; }
+        .model-drawing { height: 26px; width: auto; vertical-align: middle; border-radius: 2px; display: inline-block; margin-right: 4px; }
+        .fdb-photo { height: 26px; width: auto; vertical-align: middle; border-radius: 2px; display: inline-block; margin-right: 4px; }
         .thumb-col { text-align: center; }
+        /* Righe a altezza fissa e compatta: solo per la tabella principale dei
+           contatti (.contacts-table), non tocca le altre tabelle del portale
+           che condividono le regole generiche di style.css. */
+        .contacts-table th, .contacts-table td { padding: 4px 8px; line-height: 1.3; }
+        .contacts-table tbody tr { height: 42px; }
+        /* Nota troncata su una riga, con tooltip personalizzato al passaggio del
+           mouse per leggerla per intero senza intaccare l'altezza della riga. */
+        .note-preview {
+            display: inline-block; max-width: 140px; overflow: hidden;
+            text-overflow: ellipsis; white-space: nowrap; vertical-align: middle;
+            cursor: help; border-bottom: 1px dotted #adb5bd;
+        }
+        .note-tooltip { position: relative; }
+        .note-tooltip .note-tooltip-box {
+            display: none; position: absolute; left: 0; bottom: 100%; margin-bottom: 6px;
+            background: #212529; color: #fff; padding: 8px 10px; border-radius: 6px;
+            font-size: 0.85rem; line-height: 1.4; white-space: normal;
+            width: max-content; max-width: 280px; box-shadow: 0 4px 14px rgba(0,0,0,0.25);
+            z-index: 60;
+        }
+        .note-tooltip:hover .note-tooltip-box { display: block; }
+        /* Anteprima ingrandita delle miniature al passaggio del mouse: overlay
+           position:fixed (non CSS puro) perché .table-scroll ha overflow-x:auto,
+           che taglierebbe qualunque popup posizionato in modo relativo alla riga. */
+        #thumbPreview {
+            display: none; position: fixed; max-width: 240px; max-height: 240px;
+            border: 3px solid #fff; border-radius: 6px; box-shadow: 0 6px 24px rgba(0,0,0,0.4);
+            z-index: 9999; pointer-events: none; background: #fff;
+        }
+        .thumb-zoomable { cursor: zoom-in; }
         .bold-row { font-weight: bold; }
         .rarity-legend {
             background: #f8f9fa; border: 1px solid #dee2e6; border-radius: 8px;
@@ -943,13 +974,13 @@ try {
 
     <h2>✈️ Aerei Militari – Italia</h2>
 
-    <div class="rarity-legend">
-        <span class="legend-item"><span class="legend-color" style="background:#dc3545;"></span> <strong>Mythic</strong> (≤0.1%)</span>
-        <span class="legend-item"><span class="legend-color" style="background:#ff8c00;"></span> <strong>Legendary</strong> (≤1%)</span>
-        <span class="legend-item"><span class="legend-color" style="background:#6f42c1;"></span> <strong>Epic</strong> (≤5%)</span>
-        <span class="legend-item"><span class="legend-color" style="background:#007bff;"></span> <strong>Rare</strong> (≤15%)</span>
-        <span class="legend-item"><span class="legend-color" style="background:#28a745;"></span> <strong>Uncommon</strong> (≤30%)</span>
-        <span class="legend-item"><span class="legend-color" style="background:#212529;"></span> <strong>Common</strong> (restante)</span>
+    <div class="rarity-legend" title="Rarità composita: combina frequenza degli avvistamenti, rarità dell'operatore/forza aerea e rarità della nazionalità (vedi update_rarity.php). Soglie fisse, non ricalcolate sulla popolazione corrente.">
+        <span class="legend-item"><span class="legend-color" style="background:#dc3545;"></span> <strong>Mythic</strong></span>
+        <span class="legend-item"><span class="legend-color" style="background:#ff8c00;"></span> <strong>Legendary</strong></span>
+        <span class="legend-item"><span class="legend-color" style="background:#6f42c1;"></span> <strong>Epic</strong></span>
+        <span class="legend-item"><span class="legend-color" style="background:#007bff;"></span> <strong>Rare</strong></span>
+        <span class="legend-item"><span class="legend-color" style="background:#28a745;"></span> <strong>Uncommon</strong></span>
+        <span class="legend-item"><span class="legend-color" style="background:#212529;"></span> <strong>Common</strong></span>
     </div>
 
     <div class="filter-bar">
@@ -1018,6 +1049,7 @@ try {
                     <option value="">Nessuno</option>
                     <?php
                     $db2 = new SQLite3($dbPath, SQLITE3_OPEN_READONLY);
+                    $db2->busyTimeout(5000);
                     $res2 = $db2->query("SELECT id, name FROM geo_profiles ORDER BY name");
                     while ($gp = $res2->fetchArray(SQLITE3_ASSOC)) {
                         echo '<option value="' . $gp['id'] . '"' . ($geofilter == $gp['id'] ? ' selected' : '') . '>' . htmlspecialchars($gp['name']) . '</option>';
@@ -1056,8 +1088,10 @@ try {
         <span id="autoRefreshCountdown" style="color:#6c757d;font-size:0.85em;min-width:3.5em;"></span>
     </div>
 
+    <img id="thumbPreview" alt="">
+
     <div class="table-scroll">
-    <table>
+    <table class="contacts-table">
         <thead>
             <tr>
                 <th><?= sortLink('hex', 'HEX', $sort, $order, $_GET) ?></th>
@@ -1200,7 +1234,7 @@ try {
                     <?php if (!empty($row['model_t'])): ?>
                         <?php $silhouettePath = getSilhouettePath($row['model_t']); ?>
                         <?php if ($silhouettePath): ?>
-                            <img src="<?= htmlspecialchars($silhouettePath) ?>" class="model-silhouette" alt="<?= htmlspecialchars($row['model_t']) ?>" title="<?= htmlspecialchars($row['model_t']) ?>">
+                            <img src="<?= htmlspecialchars($silhouettePath) ?>" class="model-silhouette thumb-zoomable" alt="<?= htmlspecialchars($row['model_t']) ?>" title="<?= htmlspecialchars($row['model_t']) ?>">
                         <?php elseif ($canEdit): ?>
                             <a href="#" class="copy-btn" title="Cerca silhouette ora" onclick="fetchAssetNow('silhouette', null, '<?= htmlspecialchars($row['model_t'], ENT_QUOTES) ?>', this); return false;">🔄</a>
                         <?php endif; ?>
@@ -1221,7 +1255,7 @@ try {
                 <td class="thumb-col">
                     <?php if ($fdbPhotoPath): ?>
                         <a href="<?= htmlspecialchars($fdbPhotoPath) ?>" target="_blank" title="Foto reale di <?= htmlspecialchars($row['hex']) ?>">
-                            <img src="<?= htmlspecialchars($fdbPhotoPath) ?>" class="fdb-photo" alt="<?= htmlspecialchars($row['hex']) ?>">
+                            <img src="<?= htmlspecialchars($fdbPhotoPath) ?>" class="fdb-photo thumb-zoomable" alt="<?= htmlspecialchars($row['hex']) ?>">
                         </a>
                     <?php elseif ($canEdit): ?>
                         <a href="#" class="copy-btn" title="Cerca foto reale ora" onclick="fetchAssetNow('fdb_photo', '<?= htmlspecialchars($row['hex'], ENT_QUOTES) ?>', null, this); return false;">🔄</a>
@@ -1231,7 +1265,7 @@ try {
                     <?php if (!empty($row['model_t'])): ?>
                         <?php if ($modelPhotoPath): ?>
                             <a href="<?= htmlspecialchars($modelPhotoPath) ?>" target="_blank" title="Foto di <?= htmlspecialchars($row['model_t']) ?>">
-                                <img src="<?= htmlspecialchars($modelPhotoPath) ?>" class="model-photo" alt="<?= htmlspecialchars($row['model_t']) ?>">
+                                <img src="<?= htmlspecialchars($modelPhotoPath) ?>" class="model-photo thumb-zoomable" alt="<?= htmlspecialchars($row['model_t']) ?>">
                             </a>
                         <?php elseif ($canEdit): ?>
                             <a href="#" class="copy-btn" title="Cerca foto modello ora" onclick="fetchAssetNow('model_photo', null, '<?= htmlspecialchars($row['model_t'], ENT_QUOTES) ?>', this); return false;">🔄</a>
@@ -1242,7 +1276,7 @@ try {
                     <?php if (!empty($row['model_t'])): ?>
                         <?php if ($drawingPath): ?>
                             <a href="<?= htmlspecialchars($drawingPath) ?>" target="_blank" title="Disegno tecnico di <?= htmlspecialchars($row['model_t']) ?>">
-                                <img src="<?= htmlspecialchars($drawingPath) ?>" class="model-drawing" alt="<?= htmlspecialchars($row['model_t']) ?>">
+                                <img src="<?= htmlspecialchars($drawingPath) ?>" class="model-drawing thumb-zoomable" alt="<?= htmlspecialchars($row['model_t']) ?>">
                             </a>
                         <?php elseif ($canEdit): ?>
                             <a href="#" class="copy-btn" title="Cerca disegno tecnico ora" onclick="fetchAssetNow('drawing', null, '<?= htmlspecialchars($row['model_t'], ENT_QUOTES) ?>', this); return false;">🔄</a>
@@ -1278,7 +1312,10 @@ try {
                 <td class="rarity-<?= $row['rarity'] ?>"><?= $row['rarity'] ?></td>
                 <td>
                     <?php if (!empty($row['combined_note'])): ?>
-                        <?= htmlspecialchars($row['combined_note']) ?>
+                        <span class="note-tooltip">
+                            <span class="note-preview"><?= htmlspecialchars($row['combined_note']) ?></span>
+                            <span class="note-tooltip-box"><?= htmlspecialchars($row['combined_note']) ?></span>
+                        </span>
                     <?php endif; ?>
                     <?php if ($canEdit): ?>
                         <a href="edit_note.php?hex=<?= urlencode($row['hex']) ?>" title="Modifica nota" style="font-size:0.8em;">✏️</a>
@@ -1581,6 +1618,38 @@ try {
         }
         setAutoRefresh(select.value);
     });
+
+    // Anteprima ingrandita delle miniature (.thumb-zoomable) al passaggio del
+    // mouse: un unico overlay position:fixed riusato per tutte, spostato con
+    // il cursore. Delegato su .table-scroll invece che per singola immagine,
+    // per non appesantire il rendering di tabelle da centinaia di righe.
+    (function() {
+        var preview = document.getElementById('thumbPreview');
+        var scrollWrap = document.querySelector('.table-scroll');
+        if (!preview || !scrollWrap) return;
+
+        scrollWrap.addEventListener('mouseover', function(e) {
+            var img = e.target.closest('.thumb-zoomable');
+            if (!img) return;
+            preview.src = img.src;
+            preview.style.display = 'block';
+        });
+        scrollWrap.addEventListener('mousemove', function(e) {
+            if (preview.style.display !== 'block') return;
+            var x = e.clientX + 20;
+            var y = e.clientY + 20;
+            if (x > window.innerWidth - 260) x = e.clientX - 260;
+            if (y > window.innerHeight - 260) y = window.innerHeight - 260;
+            preview.style.left = x + 'px';
+            preview.style.top = y + 'px';
+        });
+        scrollWrap.addEventListener('mouseout', function(e) {
+            var img = e.target.closest('.thumb-zoomable');
+            if (!img) return;
+            if (e.relatedTarget && img.contains(e.relatedTarget)) return;
+            preview.style.display = 'none';
+        });
+    })();
 
     function fetchAssetNow(type, hex, modelT, el, operator) {
         var original = el.textContent;

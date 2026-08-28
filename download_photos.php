@@ -16,6 +16,7 @@ if (!is_dir($photosDir)) {
 
 $db = new SQLite3($dbPath, SQLITE3_OPEN_READONLY);
 $db->enableExceptions(true);
+$db->busyTimeout(5000);
 
 $res = $db->query("SELECT DISTINCT model_t FROM aircraft WHERE model_t IS NOT NULL AND model_t != '' ORDER BY model_t");
 $models = [];

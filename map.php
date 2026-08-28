@@ -5,6 +5,7 @@ log_access();
 
 $dbPath = __DIR__ . '/events.db';
 $db = new SQLite3($dbPath, SQLITE3_OPEN_READONLY);
+$db->busyTimeout(5000);
 
 function formatDateIt($utcString) {
     if (empty($utcString)) {

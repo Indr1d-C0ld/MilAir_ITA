@@ -13,6 +13,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $note = $_POST['note'] ?? '';
     try {
         $db = new SQLite3($dbPath);
+        $db->busyTimeout(5000);
         $db->exec("CREATE TABLE IF NOT EXISTS notes (hex TEXT PRIMARY KEY, note TEXT)");
         $stmt = $db->prepare("INSERT OR REPLACE INTO notes (hex, note) VALUES (?, ?)");
         $stmt->bindValue(1, $hex);
@@ -29,6 +30,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 $note = '';
 try {
     $db = new SQLite3($dbPath, SQLITE3_OPEN_READONLY);
+    $db->busyTimeout(5000);
     $stmt = $db->prepare("SELECT note FROM notes WHERE hex = ?");
     $stmt->bindValue(1, $hex);
     $res = $stmt->execute()->fetchArray(SQLITE3_ASSOC);

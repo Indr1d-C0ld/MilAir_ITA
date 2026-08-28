@@ -7,6 +7,7 @@ require_role('collaboratore');
 $dbPath = __DIR__ . '/events.db';
 $db = new SQLite3($dbPath);
 $db->enableExceptions(true);
+$db->busyTimeout(5000);
 
 // Crea tabelle se non esistono
 $db->exec("CREATE TABLE IF NOT EXISTS country_rules (

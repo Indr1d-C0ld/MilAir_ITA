@@ -118,6 +118,7 @@ function getImageUrlFromPhotoPage($photoPageUrl) {
 // Connessione al database
 $db = new SQLite3($dbPath, SQLITE3_OPEN_READONLY);
 $db->enableExceptions(true);
+$db->busyTimeout(5000);
 
 // Ottieni tutti gli HEX univoci
 $res = $db->query("SELECT DISTINCT hex FROM aircraft WHERE hex IS NOT NULL AND hex != '' ORDER BY hex");

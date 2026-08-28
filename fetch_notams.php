@@ -157,6 +157,7 @@ echo "$logPrefix Analizzate " . count($rows) . " voci valide (" . $skipped . " s
 try {
     $db = new SQLite3($dbPath);
     $db->enableExceptions(true);
+    $db->busyTimeout(5000);
     $db->exec("CREATE TABLE IF NOT EXISTS notams_cache (
         id TEXT PRIMARY KEY,
         lat REAL NOT NULL,

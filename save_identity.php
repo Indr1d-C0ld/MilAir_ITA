@@ -47,6 +47,7 @@ $clearOverride = isset($_POST['clear_override']);
 try {
     $db = new SQLite3($dbPath);
     $db->enableExceptions(true);
+    $db->busyTimeout(5000);
     $db->exec("CREATE TABLE IF NOT EXISTS manual_overrides (
         hex TEXT PRIMARY KEY,
         reg TEXT,

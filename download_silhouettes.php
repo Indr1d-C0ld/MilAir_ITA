@@ -18,6 +18,7 @@ if (!is_dir($silhouetteDir)) {
 // Connessione read-only al database
 $db = new SQLite3($dbPath, SQLITE3_OPEN_READONLY);
 $db->enableExceptions(true);
+$db->busyTimeout(5000);
 
 // Recupera tutti i model_t distinti non vuoti
 $res = $db->query("SELECT DISTINCT model_t FROM aircraft WHERE model_t IS NOT NULL AND model_t != '' ORDER BY model_t");
