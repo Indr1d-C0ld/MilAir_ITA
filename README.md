@@ -38,10 +38,10 @@ Tutta la logica di identificazione "è un velivolo militare" avviene lato adsb.f
 ## Funzionalità principali
 
 - **Mappa live** ([`map.php`](map.php)) con marker per ogni contatto, traccia storica on-demand ([`track.php`](track.php)), overlay meteo (OpenWeather) e satellitare (Sentinel Hub) opzionali, NOTAM italiani, e zone geografiche disegnabili/filtrabili.
-- **Dashboard principale** ([`index.php`](index.php)) con tabella dei contatti, ricerca, filtri, preferiti ([`favorites.php`](favorites.php)), note e correzioni manuali dell'analista su registrazione/callsign/modello ([`save_identity.php`](save_identity.php)).
+- **Dashboard principale** ([`index.php`](index.php)) con tabella dei contatti, ricerca, filtri, preferiti ([`favorites.php`](favorites.php)), note e correzioni manuali dell'analista su registrazione/callsign/modello ([`save_identity.php`](save_identity.php)). Ogni contatto con callsign riconoscibile (es. `IAM9001`) mostra il codice operatore/forza aerea a 3 lettere derivato automaticamente, col relativo logo se disponibile ([`download_opflags.php`](download_opflags.php)) — badge cliccabile come scorciatoia diretta di ricerca filtrata (`?operator=IAM`, sempre su tutto lo storico). Pulsanti 🔄 in tabella permettono il recupero istantaneo ([`fetch_assets_now.php`](fetch_assets_now.php)) di silhouette/foto/disegni/logo mancanti per un singolo contatto, senza attendere il prossimo ciclo cron; è disponibile anche l'aggiornamento automatico della pagina con intervallo regolabile.
 - **Motore di regole personalizzate** ([`rules.php`](rules.php)) per evidenziare righe, mappare nazionalità, marcare contatti (es. ❓ = in watchlist) e generare note automatiche in base a pattern su hex/reg/callsign/modello.
-- **Sistema di alert** ([`alert_scan.php`](alert_scan.php), eseguito ogni 5 minuti) che genera notifiche per: contatti in watchlist che ricompaiono, squawk di emergenza (7500/7600/7700), contatti mai visti prima con rarità *Mythic*/*Legendary* ([`update_rarity.php`](update_rarity.php)), e corrispondenze con le regole personalizzate.
-- **Statistiche e heatmap** ([`stats.php`](stats.php), [`heatmap.php`](heatmap.php)) su nazionalità, modelli, frequenza dei contatti.
+- **Sistema di alert** ([`alert_scan.php`](alert_scan.php), eseguito ogni 5 minuti) che genera notifiche per: contatti in watchlist che ricompaiono, squawk di emergenza (7500/7600/7700), contatti mai visti prima con rarità *Mythic*/*Legendary* ([`update_rarity.php`](update_rarity.php)), corrispondenze con le regole personalizzate, e regole di notifica su contatti non ancora visti (hex/callsign/reg attesi).
+- **Statistiche e heatmap** ([`stats.php`](stats.php), [`heatmap.php`](heatmap.php)) su nazionalità (con bandierine), modelli, frequenza dei contatti, e classifiche (forze aeree/compagnie con logo, callsign, registrazioni).
 - **Rassegna stampa correlata** ([`news.php`](news.php)): un aggregatore RSS/Atom configurabile ([`admin_feeds.php`](admin_feeds.php)) che scarica periodicamente articoli, estrae parole chiave e genera alert per le notizie pertinenti.
 - **Gestione utenti multi-ruolo** ([`admin_users.php`](admin_users.php)) con log accessi ([`admin_access_log.php`](admin_access_log.php), [`admin_access_stats.php`](admin_access_stats.php)) e un modulo di richiesta accesso pubblico con approvazione manuale da parte di un admin ([`richieste.php`](richieste.php) → [`admin_richieste.php`](admin_richieste.php)).
 - **Export dati** ([`export.php`](export.php), [`export_rules.php`](export_rules.php)) in JSON/CSV.
@@ -91,7 +91,8 @@ Tutti e tre vengono creati automaticamente (schema `CREATE TABLE IF NOT EXISTS`)
 ├── rules.php, geofilter.php, favorites.php, edit_*.php      → motore regole e personalizzazioni utente
 ├── alert_scan.php, alerts.php, alerts_count.php             → sistema di notifiche
 ├── track.php, save_identity.php, toggle_*.php               → API JSON usate via fetch() dal frontend
-├── download_*.php                                           → script CLI (cron) di arricchimento (foto/silhouette/disegni)
+├── fetch_assets_now.php                                     → recupero istantaneo on-demand di un singolo asset (via fetch() da index.php)
+├── download_*.php                                           → script CLI (cron) di arricchimento (foto/silhouette/disegni/loghi operatore)
 ├── fetch_news.php, fetch_notams.php, news_lib.php           → aggregazione RSS e NOTAM
 ├── satellite_tile.php, weather_tile.php                     → proxy server-side per i layer mappa opzionali
 ├── flight_mil_ita.py, csv_to_db.py                          → pipeline di raccolta/importazione dati
@@ -103,7 +104,7 @@ Tutti e tre vengono creati automaticamente (schema `CREATE TABLE IF NOT EXISTS`)
 └── polygons.json                                            → confini Italia (Natural Earth, per il geofiltro)
 ```
 
-Le seguenti cartelle **non sono nel repository** (create automaticamente, vedi `.gitignore`): `cache/`, `sessions/`, `drawings/`, `fdbphotos/`, `photos/`, `silhouettes/`, oltre a `*.db`, `*.log` e `mil.csv`.
+Le seguenti cartelle **non sono nel repository** (create automaticamente, vedi `.gitignore`): `cache/`, `sessions/`, `drawings/`, `fdbphotos/`, `photos/`, `silhouettes/`, `opflags/`, oltre a `*.db`, `*.log` e `mil.csv`.
 
 ## Requisiti
 
@@ -169,6 +170,7 @@ sudo systemctl enable --now milair-logger
 | ogni ora | `update_rarity.php` | ricalcola la cache di rarità dei contatti |
 | ogni 3 ore | `fetch_notams.php` | aggiorna i NOTAM per l'overlay mappa |
 | ogni 6 ore | `download_silhouettes.php`, `download_photos.php`, `download_drawings.php`, `download_fdb_photos.php` | scaricano gli asset visivi mancanti per i modelli in database |
+| una volta a settimana | `download_opflags.php` | aggiorna i loghi operatore/forza aerea (VRS OperatorFlags) |
 
 ## Ruoli utente e sicurezza
 
@@ -194,6 +196,7 @@ Misure di sicurezza implementate:
 - **Silhouette e foto contatti reali**: [flightdb.net](https://www.flightdb.net)
 - **NOTAM Italia**: [notaminfo.com](https://notaminfo.com)
 - **Bandiere nazionali**: set di icone SVG per codice ISO 3166
+- **Loghi operatore/forza aerea**: [VRS OperatorFlags](https://github.com/rikgale/VRSOperatorFlags) (GPL-3.0)
 - **Mappa**: [Leaflet](https://leafletjs.com/) con i plugin [Leaflet.draw](https://github.com/Leaflet/Leaflet.draw) e [Leaflet.heat](https://github.com/Leaflet/Leaflet.heat)
 - **Meteo**: [OpenWeather](https://openweathermap.org/) (opzionale)
 - **Satellite**: [Copernicus / Sentinel Hub](https://www.sentinel-hub.com/) (opzionale)

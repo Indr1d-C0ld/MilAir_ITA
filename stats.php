@@ -54,6 +54,66 @@ function getCountryCode($hex, $reg, $callsign) {
     if ($country !== null) return $country;
     return 'UN';
 }
+
+/**
+ * Deriva il codice operatore/forza aerea a 3 lettere da un callsign (es.
+ * "IAM9001" -> "IAM"), stessa logica di index.php — vedi lì per il dettaglio.
+ */
+function operatorFromCallsign($callsign) {
+    $cs = strtoupper(trim((string)$callsign));
+    if (preg_match('/^[A-Z]{3}\d/', $cs)) {
+        return substr($cs, 0, 3);
+    }
+    return null;
+}
+
+/** Percorso web del logo compagnia/forza aerea da opflags/{CODICE}.*, o null. */
+function getOperatorLogo($code) {
+    static $memo = [];
+    $c = strtoupper(trim((string)$code));
+    if ($c === '' || !preg_match('/^[A-Z0-9]{2,4}$/', $c)) {
+        return null;
+    }
+    if (array_key_exists($c, $memo)) {
+        return $memo[$c];
+    }
+    foreach (['bmp', 'png', 'svg', 'gif'] as $ext) {
+        $f = __DIR__ . '/opflags/' . $c . '.' . $ext;
+        if (file_exists($f) && filesize($f) > 0) {
+            return $memo[$c] = 'opflags/' . $c . '.' . $ext;
+        }
+    }
+    return $memo[$c] = null;
+}
+
+/** Emoji bandiera da codice ISO 3166-1 alpha-2 (Regional Indicator Symbols). */
+function isoToFlagEmoji($code) {
+    $code = strtoupper(trim($code));
+    if (!preg_match('/^[A-Z]{2}$/', $code)) {
+        return '';
+    }
+    $offset = 0x1F1E6 - 65;
+    return mb_chr(ord($code[0]) + $offset, 'UTF-8') . mb_chr(ord($code[1]) + $offset, 'UTF-8');
+}
+
+/** HTML bandiera: SVG locale se presente in flags/, altrimenti emoji. */
+function getFlagHtml($code) {
+    $c = strtoupper(trim((string)$code));
+    if ($c === '' || $c === 'UN') {
+        return '<span title="Nazionalità non determinata">🏳️</span>';
+    }
+    $svgFile = __DIR__ . '/flags/' . $c . '.svg';
+    if (preg_match('/^[A-Z]{2}$/', $c) && file_exists($svgFile)) {
+        return '<img src="flags/' . $c . '.svg" class="flag-icon" alt="' . $c . '" title="' . $c . '">';
+    }
+    $emoji = isoToFlagEmoji($c);
+    return $emoji !== '' ? '<span title="' . htmlspecialchars($c) . '">' . $emoji . '</span>' : htmlspecialchars($c);
+}
+
+function st_bar($v, $max, $w = 90) {
+    $px = $max > 0 ? max(2, (int) round($w * $v / $max)) : 2;
+    return '<span class="bar" style="width:' . $px . 'px"></span>';
+}
 // ---------------------------------------------------------------------------
 
 try {
@@ -131,6 +191,28 @@ try {
     $countryLabels = array_keys($countryCounts);
     $countryValues = array_values($countryCounts);
 
+    // 7b. Classifica Forze Aeree/Compagnie (codice operatore a 3 lettere derivato dal callsign)
+    $operatorCounts = [];
+    $res = $db->query("SELECT callsign FROM aircraft WHERE callsign IS NOT NULL AND callsign != ''");
+    while ($row = $res->fetchArray(SQLITE3_ASSOC)) {
+        $op = operatorFromCallsign($row['callsign']);
+        if ($op !== null) {
+            $operatorCounts[$op] = ($operatorCounts[$op] ?? 0) + 1;
+        }
+    }
+    arsort($operatorCounts);
+    $topOperators = array_slice($operatorCounts, 0, 15, true);
+
+    // 7c. Classifica Callsign (esatti, storico completo su events)
+    $topCallsigns = [];
+    $res = $db->query("SELECT callsign, COUNT(*) as cnt FROM events WHERE callsign IS NOT NULL AND callsign != '' GROUP BY callsign ORDER BY cnt DESC LIMIT 15");
+    while ($row = $res->fetchArray(SQLITE3_ASSOC)) $topCallsigns[] = $row;
+
+    // 7d. Classifica Registrazioni (esatte, storico completo su events)
+    $topRegs = [];
+    $res = $db->query("SELECT reg, COUNT(*) as cnt FROM events WHERE reg IS NOT NULL AND reg != '' GROUP BY reg ORDER BY cnt DESC LIMIT 15");
+    while ($row = $res->fetchArray(SQLITE3_ASSOC)) $topRegs[] = $row;
+
     // 8. Record e primati
     $recordAlt = $db->query("SELECT hex, callsign, model_t, alt_ft FROM aircraft
         WHERE alt_ft IS NOT NULL AND alt_ft != '' AND alt_ft > 0
@@ -192,6 +274,16 @@ try {
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <style>
         canvas { max-width: 600px; margin: 0 auto 20px; display: block; }
+        .op-logo { height: 15px; width: auto; vertical-align: middle; margin-right: 4px; }
+        .flag-icon { height: 14px; width: auto; vertical-align: middle; margin-right: 4px; }
+        .stats-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 16px; align-items: start; margin-bottom: 30px; }
+        .stats-card { border: 1px solid #dee2e6; border-radius: 8px; padding: 12px 14px; overflow-x: auto; background: #fff; }
+        .stats-card h3 { margin: 0 0 8px; font-size: 1rem; }
+        .stats-card table { font-size: 0.86rem; width: 100%; }
+        .stats-card th, .stats-card td { padding: 4px 6px; white-space: nowrap; }
+        .stats-card td:first-child { white-space: normal; }
+        .stats-card td .bar { max-width: 90px; }
+        .bar { background: #007bff; height: 10px; border-radius: 3px; display: inline-block; vertical-align: middle; max-width: 100%; }
         .stats-summary {
             display: flex;
             flex-wrap: wrap;
@@ -412,6 +504,70 @@ try {
                 <?php endforeach; ?>
             </tbody>
         </table>
+    </div>
+
+    <h2>🎖️ Classifiche</h2>
+    <div class="stats-grid">
+        <div class="stats-card">
+            <h3>Forze Aeree / Compagnie</h3>
+            <table>
+                <?php $opMax = $topOperators ? max($topOperators) : 0; ?>
+                <?php foreach ($topOperators as $op => $cnt): $logo = getOperatorLogo($op); ?>
+                    <tr>
+                        <td>
+                            <a href="index.php?operator=<?= urlencode($op) ?>" title="Filtra per <?= htmlspecialchars($op) ?> (sempre)">
+                                <?php if ($logo): ?><img src="<?= htmlspecialchars($logo) ?>" class="op-logo" alt=""><?php endif; ?>
+                                <?= htmlspecialchars($op) ?>
+                            </a>
+                        </td>
+                        <td><?= number_format($cnt) ?></td>
+                        <td><?= st_bar($cnt, $opMax) ?></td>
+                    </tr>
+                <?php endforeach; ?>
+                <?php if (!$topOperators): ?><tr><td colspan="3">Nessun operatore identificabile dai callsign in archivio.</td></tr><?php endif; ?>
+            </table>
+        </div>
+        <div class="stats-card">
+            <h3>Nazionalità</h3>
+            <table>
+                <?php $ccMax = $countryValues ? max($countryValues) : 0; ?>
+                <?php foreach ($countryCounts as $cc => $cnt): ?>
+                    <tr>
+                        <td><a href="index.php?country=<?= urlencode($cc) ?>" title="Filtra per <?= htmlspecialchars($cc) ?> (sempre)"><?= getFlagHtml($cc) ?> <?= htmlspecialchars($cc) ?></a></td>
+                        <td><?= number_format($cnt) ?></td>
+                        <td><?= st_bar($cnt, $ccMax) ?></td>
+                    </tr>
+                <?php endforeach; ?>
+            </table>
+        </div>
+        <div class="stats-card">
+            <h3>Callsign più frequenti</h3>
+            <table>
+                <?php $csMax = $topCallsigns ? max(array_column($topCallsigns, 'cnt')) : 0; ?>
+                <?php foreach ($topCallsigns as $r): ?>
+                    <tr>
+                        <td><a href="index.php?callsign=<?= urlencode($r['callsign']) ?>" title="Filtra per <?= htmlspecialchars($r['callsign']) ?> (sempre)"><?= htmlspecialchars($r['callsign']) ?></a></td>
+                        <td><?= number_format($r['cnt']) ?></td>
+                        <td><?= st_bar($r['cnt'], $csMax) ?></td>
+                    </tr>
+                <?php endforeach; ?>
+                <?php if (!$topCallsigns): ?><tr><td colspan="3">Nessun dato.</td></tr><?php endif; ?>
+            </table>
+        </div>
+        <div class="stats-card">
+            <h3>Registrazioni più frequenti</h3>
+            <table>
+                <?php $rgMax = $topRegs ? max(array_column($topRegs, 'cnt')) : 0; ?>
+                <?php foreach ($topRegs as $r): ?>
+                    <tr>
+                        <td><a href="index.php?reg=<?= urlencode($r['reg']) ?>" title="Filtra per <?= htmlspecialchars($r['reg']) ?> (sempre)"><?= htmlspecialchars($r['reg']) ?></a></td>
+                        <td><?= number_format($r['cnt']) ?></td>
+                        <td><?= st_bar($r['cnt'], $rgMax) ?></td>
+                    </tr>
+                <?php endforeach; ?>
+                <?php if (!$topRegs): ?><tr><td colspan="3">Nessun dato.</td></tr><?php endif; ?>
+            </table>
+        </div>
     </div>
 
     <h3>Distribuzione Altitudini</h3>

@@ -24,3 +24,6 @@
 
 # Ogni 15 minuti scarica i nuovi articoli dalle fonti RSS/Atom configurate:
 */15 * * * * /usr/bin/php /var/www/html/milair_ita/fetch_news.php >> /var/www/html/milair_ita/news_fetch.log 2>&1
+
+# Una volta a settimana aggiorna i loghi compagnia/forza aerea (VRS OperatorFlags) per MilAir ITA:
+0 4 * * 0 /usr/bin/php /var/www/html/milair_ita/download_opflags.php >> /var/www/html/milair_ita/opflags.log 2>&1

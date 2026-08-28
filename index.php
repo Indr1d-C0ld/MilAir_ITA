@@ -12,6 +12,7 @@ $hex      = $_GET['hex']       ?? '';
 $callsign = $_GET['callsign']  ?? '';
 $reg      = $_GET['reg']       ?? '';
 $model    = $_GET['model']     ?? '';
+$operator = strtoupper(trim($_GET['operator'] ?? ''));
 $note_search = $_GET['note']   ?? '';
 $rarity   = $_GET['rarity']    ?? '';
 $country  = $_GET['country']   ?? '';
@@ -61,13 +62,52 @@ if (isset($_GET['month']))     { $dateFrom = date('Y-m-d', strtotime('-30 days')
 if (isset($_GET['year']))      { $dateFrom = date('Y-m-d', strtotime('-1 year')); $dateTo = date('Y-m-d'); }
 if (isset($_GET['all']))       { $dateFrom = ''; $dateTo = ''; }
 
-$baseParams = array_intersect_key($_GET, array_flip(['hex','callsign','reg','model','note','rarity','country','category','markered','manual','squawk_filter','geofilter','sort','order','dateview']));
+$baseParams = array_intersect_key($_GET, array_flip(['hex','callsign','reg','model','operator','note','rarity','country','category','markered','manual','squawk_filter','geofilter','sort','order','dateview']));
 
 define('SILHOUETTE_DIR', __DIR__ . '/silhouettes');
 define('FLAGS_DIR', __DIR__ . '/flags');
 define('PHOTOS_DIR', __DIR__ . '/photos');
 define('DRAWINGS_DIR', __DIR__ . '/drawings');
 define('FDBPHOTOS_DIR', __DIR__ . '/fdbphotos');
+define('OPFLAGS_DIR', __DIR__ . '/opflags');
+
+/**
+ * Deriva il codice operatore/forza aerea a 3 lettere da un callsign, secondo
+ * la convenzione ICAO più diffusa (3 lettere + almeno una cifra, es. "IAM9001"
+ * -> "IAM"), ispirata al sistema già in uso nel nostro progetto gemello
+ * FlightAnom. Non tutti i callsign militari la rispettano (es. nomignoli di
+ * reparto come "DRAGO142"): in quel caso restituisce null, senza inventare nulla.
+ */
+function operatorFromCallsign($callsign) {
+    $cs = strtoupper(trim((string)$callsign));
+    if (preg_match('/^[A-Z]{3}\d/', $cs)) {
+        return substr($cs, 0, 3);
+    }
+    return null;
+}
+
+/**
+ * Percorso web del logo compagnia/forza aerea (VRS OperatorFlags) da
+ * opflags/{CODICE}.*, o null se non ancora scaricato. Popolato da
+ * download_opflags.php (cron) o dal recupero istantaneo in index.php.
+ */
+function getOperatorLogo($code) {
+    static $memo = [];
+    $c = strtoupper(trim((string)$code));
+    if ($c === '' || !preg_match('/^[A-Z0-9]{2,4}$/', $c)) {
+        return null;
+    }
+    if (array_key_exists($c, $memo)) {
+        return $memo[$c];
+    }
+    foreach (['bmp', 'png', 'svg', 'gif'] as $ext) {
+        $f = OPFLAGS_DIR . '/' . $c . '.' . $ext;
+        if (file_exists($f) && filesize($f) > 0) {
+            return $memo[$c] = 'opflags/' . $c . '.' . $ext;
+        }
+    }
+    return $memo[$c] = null;
+}
 
 /**
  * Confronta un valore con un pattern che può contenere wildcard '*'
@@ -657,6 +697,7 @@ try {
             }
         }
         $row['marker_emoji'] = $markersData[$row['hex']] ?? $autoMarker;
+        $row['operator'] = operatorFromCallsign($row['callsign'] ?? '');
 
         // Nuovo contatto del giorno
         $today = date('Y-m-d');
@@ -671,7 +712,7 @@ try {
     ksort($availableCountries);
 
     // Filtri inclusi geofilter
-    $filtered = array_filter($allData, function($r) use ($dateFrom, $dateTo, $hex, $callsign, $reg, $model, $note_search, $rarity, $country, $category, $markered, $manual, $squawkFilter, $geoJSON) {
+    $filtered = array_filter($allData, function($r) use ($dateFrom, $dateTo, $hex, $callsign, $reg, $model, $operator, $note_search, $rarity, $country, $category, $markered, $manual, $squawkFilter, $geoJSON) {
         if ($dateFrom && strtotime($r['ident_last_seen']) < strtotime($dateFrom . ' 00:00:00')) return false;
         if ($dateTo && strtotime($r['ident_last_seen']) > strtotime($dateTo . ' 23:59:59')) return false;
 
@@ -706,6 +747,8 @@ try {
                 if (stripos($r['model_t'], $model) === false) return false;
             }
         }
+
+        if ($operator && ($r['operator'] ?? '') !== $operator) return false;
 
         if ($note_search && stripos($r['combined_note'] ?? '', $note_search) === false) return false;
 
@@ -769,6 +812,9 @@ try {
         table a:hover { color: #0056b3; text-decoration: none; }
         .model-silhouette { height: 20px; width: auto; vertical-align: middle; margin-right: 4px; }
         .flag-icon { height: 14px; width: auto; vertical-align: middle; margin-right: 4px; }
+        .op-logo { height: 13px; width: auto; vertical-align: middle; margin-right: 3px; }
+        .operator-badge { font-size: 0.85em; color: #6c757d; display: inline-flex; align-items: center; }
+        .operator-badge:hover { color: #0056b3; text-decoration: underline; }
         .model-photo { height: 35px; width: auto; vertical-align: middle; border-radius: 2px; display: inline-block; margin-right: 4px; }
         .model-drawing { height: 35px; width: auto; vertical-align: middle; border-radius: 2px; display: inline-block; margin-right: 4px; }
         .fdb-photo { height: 35px; width: auto; vertical-align: middle; border-radius: 2px; display: inline-block; margin-right: 4px; }
@@ -913,6 +959,7 @@ try {
             <label>Callsign: <input type="text" name="callsign" placeholder="es. IAM..." value="<?= htmlspecialchars($callsign) ?>"></label>
             <label>Reg: <input type="text" name="reg" placeholder="es. MM..." value="<?= htmlspecialchars($reg) ?>"></label>
             <label>Modello: <input type="text" name="model" placeholder="es. C130" value="<?= htmlspecialchars($model) ?>"></label>
+            <label>Operatore: <input type="text" name="operator" placeholder="es. IAM" maxlength="3" style="text-transform:uppercase;" value="<?= htmlspecialchars($operator) ?>"></label>
             <label>Note: <input type="text" name="note" placeholder="cerca nelle note..." value="<?= htmlspecialchars($note_search) ?>"></label>
             <label>Rarità:
                 <select name="rarity">
@@ -1123,6 +1170,18 @@ try {
                         <a href="#" onclick="copyToClipboard('<?= htmlspecialchars($row['callsign'], ENT_QUOTES) ?>'); return false;" title="Copia Callsign" class="copy-btn">📋</a>
                     <?php else: ?>
                         <?= htmlspecialchars($row['callsign']) ?>
+                    <?php endif; ?>
+                    <?php if (!empty($row['operator'])): ?>
+                        <?php $opLogo = getOperatorLogo($row['operator']); ?>
+                        <br><a href="?<?= http_build_query(['operator' => $row['operator']]) ?>" class="operator-badge" title="Filtra per operatore/forza aerea <?= htmlspecialchars($row['operator']) ?> (sempre)">
+                            <?php if ($opLogo): ?>
+                                <img src="<?= htmlspecialchars($opLogo) ?>" class="op-logo" alt="<?= htmlspecialchars($row['operator']) ?>">
+                            <?php endif; ?>
+                            <?= htmlspecialchars($row['operator']) ?>
+                        </a>
+                        <?php if ($canEdit && !$opLogo): ?>
+                            <a href="#" class="copy-btn" title="Cerca logo operatore ora" onclick="fetchAssetNow('operator_logo', null, null, this, '<?= htmlspecialchars($row['operator'], ENT_QUOTES) ?>'); return false;">🔄</a>
+                        <?php endif; ?>
                     <?php endif; ?>
                 </td>
                 <td>
@@ -1519,7 +1578,7 @@ try {
         setAutoRefresh(select.value);
     });
 
-    function fetchAssetNow(type, hex, modelT, el) {
+    function fetchAssetNow(type, hex, modelT, el, operator) {
         var original = el.textContent;
         el.textContent = '⏳';
         el.style.pointerEvents = 'none';
@@ -1527,7 +1586,7 @@ try {
         fetch('fetch_assets_now.php', {
             method: 'POST',
             headers: {'Content-Type': 'application/x-www-form-urlencoded'},
-            body: new URLSearchParams({type: type, hex: hex || '', model_t: modelT || '', csrf_token: csrf})
+            body: new URLSearchParams({type: type, hex: hex || '', model_t: modelT || '', operator: operator || '', csrf_token: csrf})
         })
         .then(function(r) { return r.json(); })
         .then(function(data) {

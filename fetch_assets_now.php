@@ -32,6 +32,7 @@ $type = $_POST['type'] ?? '';
 $hex = strtoupper(trim($_POST['hex'] ?? ''));
 $modelRaw = trim($_POST['model_t'] ?? '');
 $safeModel = preg_replace('/[^A-Za-z0-9_\-]/', '', strtoupper($modelRaw));
+$safeOperator = preg_replace('/[^A-Za-z0-9]/', '', strtoupper(trim($_POST['operator'] ?? '')));
 
 function downloadToFile(string $url, string $localFile): bool {
     $data = @file_get_contents($url, false, stream_context_create([
@@ -130,6 +131,53 @@ switch ($type) {
             respond(true, ['path' => 'drawings/' . $safeModel . '.jpg']);
         }
         respond(false, ['error' => 'disegno tecnico non trovato su doc8643.com']);
+
+    case 'operator_logo':
+        if ($safeOperator === '' || strlen($safeOperator) < 2 || strlen($safeOperator) > 4) {
+            respond(false, ['error' => 'codice operatore non valido']);
+        }
+        $local = null;
+        foreach (['bmp', 'png', 'svg', 'gif'] as $ext) {
+            $f = __DIR__ . '/opflags/' . $safeOperator . '.' . $ext;
+            if (file_exists($f) && filesize($f) > 0) {
+                respond(true, ['path' => 'opflags/' . $safeOperator . '.' . $ext, 'already' => true]);
+            }
+        }
+        // Pacchetto VRS OperatorFlags: ~3MB, nessuna autenticazione richiesta.
+        // Scaricato per intero anche per un solo codice, non essendoci un mirror
+        // per-file affidabile (stessa limitazione documentata in download_opflags.php).
+        $zipData = fetchUrlCurl('https://raw.githubusercontent.com/rikgale/VRSOperatorFlags/main/AirlineLogos.zip');
+        if ($zipData === false || strlen($zipData) < 1000) {
+            respond(false, ['error' => 'download del pacchetto loghi fallito']);
+        }
+        $tmpZip = sys_get_temp_dir() . '/milair_opflags_' . getmypid() . '.zip';
+        if (@file_put_contents($tmpZip, $zipData) === false) {
+            respond(false, ['error' => 'impossibile scrivere il file temporaneo']);
+        }
+        $za = new ZipArchive();
+        if ($za->open($tmpZip) !== true) {
+            @unlink($tmpZip);
+            respond(false, ['error' => 'pacchetto loghi non apribile']);
+        }
+        $found = false;
+        foreach (['bmp', 'png'] as $ext) {
+            $idx = $za->locateName($safeOperator . '.' . $ext, ZipArchive::FL_NOCASE);
+            if ($idx !== false) {
+                $logoData = $za->getFromIndex($idx);
+                if ($logoData !== false && strlen($logoData) > 100) {
+                    @file_put_contents(__DIR__ . '/opflags/' . $safeOperator . '.' . $ext, $logoData);
+                    $found = true;
+                }
+                break;
+            }
+        }
+        $za->close();
+        @unlink($tmpZip);
+        if ($found) {
+            $ext = file_exists(__DIR__ . '/opflags/' . $safeOperator . '.bmp') ? 'bmp' : 'png';
+            respond(true, ['path' => 'opflags/' . $safeOperator . '.' . $ext]);
+        }
+        respond(false, ['error' => 'nessun logo trovato per questo codice operatore']);
 
     case 'fdb_photo':
         if (!preg_match('/^[0-9A-F]{6}$/', $hex)) respond(false, ['error' => 'hex non valido']);
