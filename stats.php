@@ -180,6 +180,11 @@ try {
     $res = $db->query("SELECT hex, COUNT(*) as cnt FROM events GROUP BY hex ORDER BY cnt DESC LIMIT 10");
     while ($row = $res->fetchArray(SQLITE3_ASSOC)) $hexs[] = $row;
 
+    // 6b. Classifica HEX più frequenti (per la sezione Classifiche, con callsign associato)
+    $topHexes = [];
+    $res = $db->query("SELECT hex, MAX(callsign) as callsign, COUNT(*) as cnt FROM events GROUP BY hex ORDER BY cnt DESC LIMIT 15");
+    while ($row = $res->fetchArray(SQLITE3_ASSOC)) $topHexes[] = $row;
+
     // 7. Nazionalità
     $countryCounts = [];
     $res = $db->query("SELECT reg, callsign FROM aircraft");
@@ -284,6 +289,7 @@ try {
         .stats-card td:first-child { white-space: normal; }
         .stats-card td .bar { max-width: 90px; }
         .bar { background: #007bff; height: 10px; border-radius: 3px; display: inline-block; vertical-align: middle; max-width: 100%; }
+        .muted { color: #6c757d; font-size: 0.9em; }
         .stats-summary {
             display: flex;
             flex-wrap: wrap;
@@ -538,6 +544,23 @@ try {
                         <td><?= st_bar($cnt, $ccMax) ?></td>
                     </tr>
                 <?php endforeach; ?>
+            </table>
+        </div>
+        <div class="stats-card">
+            <h3>HEX più frequenti</h3>
+            <table>
+                <?php $hxMax = $topHexes ? max(array_column($topHexes, 'cnt')) : 0; ?>
+                <?php foreach ($topHexes as $r): ?>
+                    <tr>
+                        <td>
+                            <a href="index.php?hex=<?= urlencode($r['hex']) ?>" title="Filtra per <?= htmlspecialchars($r['hex']) ?> (sempre)"><?= htmlspecialchars($r['hex']) ?></a>
+                            <?php if (!empty($r['callsign'])): ?><span class="muted"> (<?= htmlspecialchars($r['callsign']) ?>)</span><?php endif; ?>
+                        </td>
+                        <td><?= number_format($r['cnt']) ?></td>
+                        <td><?= st_bar($r['cnt'], $hxMax) ?></td>
+                    </tr>
+                <?php endforeach; ?>
+                <?php if (!$topHexes): ?><tr><td colspan="3">Nessun dato.</td></tr><?php endif; ?>
             </table>
         </div>
         <div class="stats-card">

@@ -48,7 +48,8 @@ $allowedSorts = [
     'rarity'             => 'rarity',
     'note'               => 'note',
     'country'            => 'country',
-    'squawk'             => 'last_squawk'
+    'squawk'             => 'last_squawk',
+    'operator'           => 'operator'
 ];
 $sort = $_GET['sort'] ?? 'ident_last_seen';
 if (!array_key_exists($sort, $allowedSorts)) {
@@ -467,7 +468,8 @@ function compareRows($a, $b, $sort, $order) {
         'rarity' => 'rarity',
         'note' => 'note',
         'country' => 'country',
-        'squawk' => 'last_squawk'
+        'squawk' => 'last_squawk',
+        'operator' => 'operator'
     ];
     $key = $fieldMap[$sort] ?? 'ident_last_seen';
     $va = $a[$key] ?? '';
@@ -813,8 +815,7 @@ try {
         .model-silhouette { height: 20px; width: auto; vertical-align: middle; margin-right: 4px; }
         .flag-icon { height: 14px; width: auto; vertical-align: middle; margin-right: 4px; }
         .op-logo { height: 13px; width: auto; vertical-align: middle; margin-right: 3px; }
-        .operator-badge { font-size: 0.85em; color: #6c757d; display: inline-flex; align-items: center; }
-        .operator-badge:hover { color: #0056b3; text-decoration: underline; }
+        .operator-badge { display: inline-flex; align-items: center; }
         .model-photo { height: 35px; width: auto; vertical-align: middle; border-radius: 2px; display: inline-block; margin-right: 4px; }
         .model-drawing { height: 35px; width: auto; vertical-align: middle; border-radius: 2px; display: inline-block; margin-right: 4px; }
         .fdb-photo { height: 35px; width: auto; vertical-align: middle; border-radius: 2px; display: inline-block; margin-right: 4px; }
@@ -1024,7 +1025,7 @@ try {
                     ?>
                 </select>
             </label>
-            <button type="submit">Cerca</button>
+            <button type="submit" class="btn">Cerca</button>
             <a href="index.php" class="btn">Reset</a>
         </form>
         <div class="quick-buttons">
@@ -1063,6 +1064,7 @@ try {
                 <th>Mappa</th>
                 <th><?= sortLink('country', 'Naz.', $sort, $order, $_GET) ?></th>
                 <th><?= sortLink('callsign', 'Callsign', $sort, $order, $_GET) ?></th>
+                <th><?= sortLink('operator', 'Operatore', $sort, $order, $_GET) ?></th>
                 <th><?= sortLink('reg', 'Reg', $sort, $order, $_GET) ?></th>
                 <th><?= sortLink('model_t', 'Modello', $sort, $order, $_GET) ?></th>
                 <th><?= sortLink('squawk', 'Squawk', $sort, $order, $_GET) ?></th>
@@ -1171,9 +1173,11 @@ try {
                     <?php else: ?>
                         <?= htmlspecialchars($row['callsign']) ?>
                     <?php endif; ?>
+                </td>
+                <td>
                     <?php if (!empty($row['operator'])): ?>
                         <?php $opLogo = getOperatorLogo($row['operator']); ?>
-                        <br><a href="?<?= http_build_query(['operator' => $row['operator']]) ?>" class="operator-badge" title="Filtra per operatore/forza aerea <?= htmlspecialchars($row['operator']) ?> (sempre)">
+                        <a href="?<?= http_build_query(['operator' => $row['operator']]) ?>" class="operator-badge" title="Filtra per operatore/forza aerea <?= htmlspecialchars($row['operator']) ?> (sempre)">
                             <?php if ($opLogo): ?>
                                 <img src="<?= htmlspecialchars($opLogo) ?>" class="op-logo" alt="<?= htmlspecialchars($row['operator']) ?>">
                             <?php endif; ?>
