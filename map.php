@@ -363,6 +363,9 @@ $notamAreasJson = json_encode($notamAreas);
             color: #dc3545;
             font-weight: bold;
         }
+        .track-info button.isolate-btn {
+            color: #007bff;
+        }
         .notam-controls {
             position: absolute;
             bottom: 20px;
@@ -428,7 +431,8 @@ $notamAreasJson = json_encode($notamAreas);
     <!-- Traccia storica attiva -->
     <div class="track-info" id="trackInfo">
         🛰️ Traccia: <span id="trackHexLabel"></span>
-        <button type="button" onclick="hideTrack()">✖ Nascondi</button>
+        <button type="button" class="isolate-btn" id="isolateTrackBtn" onclick="toggleIsolateTrack()">🎯 Isola</button>
+        <button type="button" onclick="hideTrack(); updateMarkers();">✖ Nascondi</button>
     </div>
 
     <!-- Controlli temporali -->
@@ -656,12 +660,47 @@ $notamAreasJson = json_encode($notamAreas);
         }
 
         // ---------------- Traccia storica on-demand ----------------
+        // hex/label della traccia attualmente mostrata (null = nessuna): permette
+        // a updateMarkers() di ridisegnarla con il nuovo intervallo temporale
+        // invece di nasconderla ad ogni modifica dello slider/unità di tempo.
+        let activeTrackHex = null;
+        let activeTrackLabel = null;
+        // Se valorizzato, updateMarkers() disegna solo il marker di questo hex,
+        // nascondendo tutti gli altri — attivato/disattivato dal pulsante "Isola"
+        // nel pannello della traccia storica.
+        let isolateTrackHex = null;
+
+        function updateIsolateButtonLabel() {
+            const btn = document.getElementById('isolateTrackBtn');
+            if (!btn) return;
+            btn.textContent = isolateTrackHex ? '👁️ Mostra tutti' : '🎯 Isola';
+        }
+
+        function toggleIsolateTrack() {
+            if (!activeTrackHex) return;
+            isolateTrackHex = isolateTrackHex ? null : activeTrackHex;
+            updateIsolateButtonLabel();
+            updateMarkers();
+        }
+
         function hideTrack() {
             trackLayerGroup.clearLayers();
             document.getElementById('trackInfo').style.display = 'none';
+            activeTrackHex = null;
+            activeTrackLabel = null;
+            isolateTrackHex = null;
+            updateIsolateButtonLabel();
         }
 
-        function showTrack(hex, label) {
+        function showTrack(hex, label, silent) {
+            if (isolateTrackHex && isolateTrackHex !== hex) {
+                // Traccia diversa da quella isolata: evita di restare "bloccati"
+                // sull'hex precedente, che non sarebbe più quello mostrato.
+                isolateTrackHex = null;
+            }
+            activeTrackHex = hex;
+            activeTrackLabel = label;
+            updateIsolateButtonLabel();
             trackLayerGroup.clearLayers();
             const unit = document.getElementById('timeUnit').value;
             const value = parseInt(document.getElementById('sliderValue').textContent, 10);
@@ -671,7 +710,10 @@ $notamAreasJson = json_encode($notamAreas);
                 .then(r => r.json())
                 .then(points => {
                     if (!Array.isArray(points) || points.length < 2) {
-                        alert('Traccia non disponibile per il periodo selezionato (servono almeno 2 posizioni).');
+                        document.getElementById('trackInfo').style.display = 'none';
+                        if (!silent) {
+                            alert('Traccia non disponibile per il periodo selezionato (servono almeno 2 posizioni).');
+                        }
                         return;
                     }
                     const latlngs = points.map(p => [p.lat, p.lon]);
@@ -683,12 +725,17 @@ $notamAreasJson = json_encode($notamAreas);
                         }).bindPopup(`Alt: ${p.alt_ft || '?'} ft, Vel: ${p.gs_kt || '?'} kt<br><small>${p.first_seen_utc}</small>`);
                         trackLayerGroup.addLayer(dot);
                     });
-                    map.fitBounds(line.getBounds(), {padding: [30, 30]});
+                    // Al primo caricamento (click manuale) centra la mappa sulla traccia;
+                    // sui refresh automatici (slider) lascia la vista dove si trova, per
+                    // non "strappare" la mappa da sotto il mouse dell'utente mentre trascina.
+                    if (!silent) {
+                        map.fitBounds(line.getBounds(), {padding: [30, 30]});
+                    }
 
                     document.getElementById('trackHexLabel').textContent = (label || hex) + ' (' + points.length + ' punti)';
                     document.getElementById('trackInfo').style.display = 'block';
                 })
-                .catch(() => alert('Errore nel caricamento della traccia.'));
+                .catch(() => { if (!silent) alert('Errore nel caricamento della traccia.'); });
         }
         // -------------------------------------------------------------
 
@@ -711,6 +758,7 @@ $notamAreasJson = json_encode($notamAreas);
 
             // Filtra marker in base a last_seen_utc (ed eventualmente solo squawk di emergenza)
             const filtered = allMarkers.filter(m => {
+                if (isolateTrackHex) return m.hex === isolateTrackHex;
                 const date = new Date(m.last_seen_utc);
                 if (date < cutoff) return false;
                 if (emergencyOnly && !isEmergencySquawk(m.squawk)) return false;
@@ -718,7 +766,11 @@ $notamAreasJson = json_encode($notamAreas);
             });
 
             layerGroup.clearLayers();
-            hideTrack();
+            if (activeTrackHex) {
+                showTrack(activeTrackHex, activeTrackLabel, true);
+            } else {
+                hideTrack();
+            }
 
             filtered.forEach(m => {
                 const popupContent = `

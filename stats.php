@@ -6,6 +6,41 @@ log_access();
 $dbPath = __DIR__ . '/events.db';
 
 // --------------------- FUNZIONI DI MAPPING NAZIONALITÀ ---------------------
+/**
+ * Confronta un valore con un pattern che può contenere wildcard '*' oppure
+ * un intervallo "BASSO - ALTO" (es. "E00000 - E3FFFF"). Stessa logica di
+ * index.php/map.php/rules.php — vedi lì per il dettaglio.
+ */
+function patternMatch($value, $pattern) {
+    $value = strtoupper(trim($value));
+    $pattern = trim($pattern);
+
+    if (preg_match('/^(\S+)\s+-\s+(\S+)$/', $pattern, $m)) {
+        return rangeMatch($value, $m[1], $m[2]);
+    }
+
+    $pattern = strtoupper($pattern);
+    if (strpos($pattern, '*') === false) {
+        return strpos($value, $pattern) === 0;
+    }
+
+    $regex = '/^' . str_replace('\*', '.*', preg_quote($pattern, '/')) . '$/i';
+    return preg_match($regex, $value) === 1;
+}
+
+function rangeMatch($value, $lowPattern, $highPattern) {
+    $low = strtoupper(rtrim(trim($lowPattern), '*'));
+    $high = strtoupper(rtrim(trim($highPattern), '*'));
+    if ($low === '' || $high === '') {
+        return false;
+    }
+    $lowLen = strlen($low);
+    $highLen = strlen($high);
+    $vLow = strlen($value) >= $lowLen ? substr($value, 0, $lowLen) : str_pad($value, $lowLen, '0');
+    $vHigh = strlen($value) >= $highLen ? substr($value, 0, $highLen) : str_pad($value, $highLen, '0');
+    return $vLow >= $low && $vHigh <= $high;
+}
+
 function getCountryFromReg($reg) {
     $map = [
         'MM' => 'IT', 'I-' => 'IT', 'F-' => 'FR', 'D-' => 'DE', 'G-' => 'GB',
@@ -47,12 +82,26 @@ function getCountryFromCallsign($callsign) {
     return null;
 }
 
-function getCountryCode($hex, $reg, $callsign) {
+function getCountryCode($hex, $reg, $callsign, $customRules = []) {
+    // Regole personalizzate (rules.php, tabella country_rules): coprono l'intera
+    // allocazione ICAO per blocco hex, sono la fonte principale — le mappature
+    // per prefisso reg/callsign sotto sono solo un fallback secondario.
+    foreach ($customRules as $rule) {
+        $fieldValue = null;
+        if ($rule['field'] === 'hex') $fieldValue = strtoupper(trim($hex));
+        elseif ($rule['field'] === 'reg') $fieldValue = strtoupper(trim($reg ?? ''));
+        elseif ($rule['field'] === 'callsign') $fieldValue = strtoupper(trim($callsign ?? ''));
+
+        if ($fieldValue !== null && patternMatch($fieldValue, $rule['pattern'])) {
+            return strtoupper($rule['country_code']);
+        }
+    }
+
     $country = getCountryFromReg($reg);
     if ($country !== null) return $country;
     $country = getCountryFromCallsign($callsign);
     if ($country !== null) return $country;
-    return 'UN';
+    return 'ZZ';
 }
 
 /**
@@ -139,6 +188,13 @@ try {
     $numActiveDays = $db->querySingle("SELECT COUNT(DISTINCT date) FROM daily_hex");
     $numNotes = $db->querySingle("SELECT COUNT(*) FROM notes WHERE note IS NOT NULL AND note != ''");
 
+    // Regole personalizzate di nazionalità (stessa fonte di index.php/map.php/rules.php)
+    $customRules = [];
+    $resRules = $db->query("SELECT field, pattern, country_code FROM country_rules");
+    while ($rule = $resRules->fetchArray(SQLITE3_ASSOC)) {
+        $customRules[] = $rule;
+    }
+
     // ================== QUERY PER GRAFICI ==================
 
     // 1. Altitudini
@@ -188,9 +244,9 @@ try {
 
     // 7. Nazionalità
     $countryCounts = [];
-    $res = $db->query("SELECT reg, callsign FROM aircraft");
+    $res = $db->query("SELECT hex, reg, callsign FROM aircraft");
     while ($row = $res->fetchArray(SQLITE3_ASSOC)) {
-        $country = getCountryCode($row['hex'] ?? '', $row['reg'], $row['callsign']);
+        $country = getCountryCode($row['hex'] ?? '', $row['reg'], $row['callsign'], $customRules);
         $countryCounts[$country] = ($countryCounts[$country] ?? 0) + 1;
     }
     arsort($countryCounts);
