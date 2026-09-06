@@ -43,6 +43,7 @@ Tutta la logica di identificazione "è un velivolo militare" avviene lato adsb.f
 - **Sistema di alert** ([`alert_scan.php`](alert_scan.php), eseguito ogni 5 minuti) che genera notifiche per: contatti in watchlist che ricompaiono, squawk di emergenza (7500/7600/7700), contatti mai visti prima con rarità *Mythic*/*Legendary* ([`update_rarity.php`](update_rarity.php)), corrispondenze con le regole personalizzate, e regole di notifica su contatti non ancora visti (hex/callsign/reg attesi).
 - **Statistiche e heatmap** ([`stats.php`](stats.php), [`heatmap.php`](heatmap.php)) su nazionalità (con bandierine), modelli, frequenza dei contatti, e classifiche (forze aeree/compagnie con logo, callsign, registrazioni).
 - **Rassegna stampa correlata** ([`news.php`](news.php)): un aggregatore RSS/Atom configurabile ([`admin_feeds.php`](admin_feeds.php)) che scarica periodicamente articoli, estrae parole chiave e genera alert per le notizie pertinenti.
+- **Diario di bordo** ([`diary.php`](diary.php)): una sintesi giornaliera deterministica dei contatti (per ora, per operatore/nazionalità/modello, mezzi ricorrenti, contatti rari, squawk di emergenza, novità rispetto ai 14 giorni precedenti). Con [`diary_build.php`](diary_build.php) (cron notturno) la voce di ieri viene calcolata e **pubblicata automaticamente**; senza cron resta calcolabile e pubblicabile a mano dall'admin. Pubblica in lettura solo per i giorni effettivamente pubblicati. Supporta opzionalmente una sintesi narrativa generata da un assistente IA in esecuzione su un server [Ollama](https://ollama.com) nella propria rete locale ([`ai_lib.php`](ai_lib.php), mai un servizio cloud, sempre un passo manuale): la bozza generata va sempre rivista da un operatore.
 - **Gestione utenti multi-ruolo** ([`admin_users.php`](admin_users.php)) con log accessi ([`admin_access_log.php`](admin_access_log.php), [`admin_access_stats.php`](admin_access_stats.php)) e un modulo di richiesta accesso pubblico con approvazione manuale da parte di un admin ([`richieste.php`](richieste.php) → [`admin_richieste.php`](admin_richieste.php)).
 - **Export dati** ([`export.php`](export.php), [`export_rules.php`](export_rules.php)) in JSON/CSV.
 
@@ -148,8 +149,9 @@ Tutte le chiavi sono **facoltative**: senza di esse l'app funziona regolarmente,
 | `geo_secrets.php` | `IPDATA_API_KEY` | Geolocalizzazione IP (alternativa/fallback) | [ipdata.co](https://ipdata.co) (piano free) |
 | `map_secrets.php` | `SENTINELHUB_CLIENT_ID` / `SENTINELHUB_CLIENT_SECRET` | Layer satellitare sulla mappa | [sentinel-hub.com](https://www.sentinel-hub.com) (piano free, OAuth client da creare sul [dashboard](https://apps.sentinel-hub.com/dashboard/)) |
 | `map_secrets.php` | `OPENWEATHER_API_KEY` | Layer meteo sulla mappa | [openweathermap.org/api](https://openweathermap.org/api) (piano free) |
+| `ai_secrets.php` | `AI_BASE_URL` | Sintesi narrativa IA nel Diario | Nessuna: indirizzo di un server [Ollama](https://ollama.com) nella propria rete locale, non un servizio cloud |
 
-`geo_secrets.php` e `map_secrets.php` sono esclusi dal repository (`.gitignore`) e negati esplicitamente via `.htaccess`: non vengono mai serviti al browser, solo inclusi lato server.
+`geo_secrets.php`, `map_secrets.php` e `ai_secrets.php` sono esclusi dal repository (`.gitignore`) e negati esplicitamente via `.htaccess`: non vengono mai serviti al browser, solo inclusi lato server.
 
 ## Automazioni (cron / systemd)
 
@@ -171,6 +173,7 @@ sudo systemctl enable --now milair-logger
 | ogni 3 ore | `fetch_notams.php` | aggiorna i NOTAM per l'overlay mappa |
 | ogni 6 ore | `download_silhouettes.php`, `download_photos.php`, `download_drawings.php`, `download_fdb_photos.php` | scaricano gli asset visivi mancanti per i modelli in database |
 | una volta a settimana | `download_opflags.php` | aggiorna i loghi operatore/forza aerea (VRS OperatorFlags) |
+| ogni notte alle 00:15 | `diary_build.php --publish --quiet` | calcola e pubblica automaticamente la voce di Diario di ieri |
 
 ## Ruoli utente e sicurezza
 

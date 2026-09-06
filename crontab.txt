@@ -27,3 +27,9 @@
 
 # Una volta a settimana aggiorna i loghi compagnia/forza aerea (VRS OperatorFlags) per MilAir ITA:
 0 4 * * 0 /usr/bin/php /var/www/html/milair_ita/download_opflags.php >> /var/www/html/milair_ita/opflags.log 2>&1
+
+# Ogni notte alle 00:15 calcola e pubblica automaticamente la voce di Diario di IERI
+# (non tocca la sintesi IA, che resta un passo manuale in diary.php):
+15 0 * * * /usr/bin/php /var/www/html/milair_ita/diary_build.php --publish --quiet >> /var/www/html/milair_ita/diary.log 2>&1
+# Per il primo popolamento retroattivo, esegui una volta a mano (non da cron):
+#   php /var/www/html/milair_ita/diary_build.php --publish --backfill=30

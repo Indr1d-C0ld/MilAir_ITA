@@ -482,6 +482,7 @@ function render_nav(string $current = ''): void {
         'map.php'       => '🗺️ Mappa',
         'heatmap.php'   => '🔥 Heatmap',
         'stats.php'     => '📊 Statistiche',
+        'diary.php'     => '📓 Diario',
         'favorites.php' => '⭐ Favoriti',
         'news.php'      => '📰 Notizie',
     ];

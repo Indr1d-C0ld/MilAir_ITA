@@ -2,6 +2,7 @@
 # Le versioni .example sono tracciate, i file reali no.
 geo_secrets.php
 map_secrets.php
+ai_secrets.php
 
 # === Database (dati operativi/personali, ricreati automaticamente al primo avvio) ===
 *.db
@@ -24,6 +25,7 @@ drawings/
 fdbphotos/
 photos/
 silhouettes/
+opflags/
 
 # === Python ===
 __pycache__/

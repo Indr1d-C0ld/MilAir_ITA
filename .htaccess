@@ -1,6 +1,6 @@
 # Nega l'accesso diretto ai file contenenti le API key (mai serviti al browser,
 # usati solo lato server via require_once)
-<FilesMatch "^(map_secrets|geo_secrets)\.php$">
+<FilesMatch "^(map_secrets|geo_secrets|ai_secrets)\.php$">
     Require all denied
 </FilesMatch>
 
@@ -23,3 +23,18 @@ RewriteRule ^cache/ - [F,L]
 <FilesMatch "\.db(-shm|-wal|-journal)?$">
     Require all denied
 </FilesMatch>
+
+# Nega l'accesso diretto a log applicativi, script server-side e file di
+# servizio lasciati nella web root dai cron (alerts.log, crontab.txt,
+# csv_to_db.py, flight_mil_ita.py, milair-logger.service, fix_permissions.sh,
+# index.php_old, rules.php_old, ecc.): erano scaricabili da chiunque, nessuna
+# pagina dell'app li richiama via browser.
+<FilesMatch "\.(log|py|sh|service)$">
+    Require all denied
+</FilesMatch>
+<FilesMatch "_old$">
+    Require all denied
+</FilesMatch>
+<Files "crontab.txt">
+    Require all denied
+</Files>
