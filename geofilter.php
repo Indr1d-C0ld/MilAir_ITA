@@ -149,8 +149,13 @@ $profiles = $db->query("SELECT * FROM geo_profiles ORDER BY created_at DESC");
     <script>
         // Inizializza mappa
         const map = L.map('map').setView([42.5, 12.5], 6);
-        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-            attribution: '&copy; OpenStreetMap contributors'
+        // Tile: tile.openstreetmap.org blocca ormai questo traffico (403 policy
+        // anti-abuso) e i tile CARTO anonimi richiedono adesso una API key.
+        // Esri World Street Map non richiede chiave per uso leggero come questo.
+        // Nota: l'URL Esri usa l'ordine {z}/{y}/{x} (non {z}/{x}/{y}).
+        L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Street_Map/MapServer/tile/{z}/{y}/{x}', {
+            attribution: 'Tiles &copy; Esri &mdash; Source: Esri, DeLorme, NAVTEQ',
+            maxZoom: 19
         }).addTo(map);
 
         // FeatureGroup per i layer disegnati

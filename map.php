@@ -474,8 +474,13 @@ $notamAreasJson = json_encode($notamAreas);
     <script>
         const map = L.map('map').setView([42.5, 12.5], 6);
 
-        const osmLayer = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-            attribution: '&copy; OpenStreetMap contributors'
+        // Tile: tile.openstreetmap.org blocca ormai questo traffico (403 policy
+        // anti-abuso) e i tile CARTO anonimi richiedono adesso una API key.
+        // Esri World Street Map non richiede chiave per uso leggero come questo.
+        // Nota: l'URL Esri usa l'ordine {z}/{y}/{x} (non {z}/{x}/{y}).
+        const osmLayer = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Street_Map/MapServer/tile/{z}/{y}/{x}', {
+            attribution: 'Tiles &copy; Esri &mdash; Source: Esri, DeLorme, NAVTEQ',
+            maxZoom: 19
         }).addTo(map);
 
         const satelliteLayer = L.tileLayer('satellite_tile.php?z={z}&x={x}&y={y}', {
@@ -562,7 +567,7 @@ $notamAreasJson = json_encode($notamAreas);
 
         // ---------------- Selettore layer unificato ----------------
         const baseLayers = {
-            '🗺️ Stradale (OSM)': osmLayer,
+            '🗺️ Stradale (Esri)': osmLayer,
             '🛰️ Satellite (Copernicus)': satelliteLayer
         };
         const overlayLayers = Object.assign({
