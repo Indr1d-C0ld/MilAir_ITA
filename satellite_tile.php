@@ -71,6 +71,78 @@ if (file_exists($cacheFile) && (time() - filemtime($cacheFile)) < $maxAge) {
     exit;
 }
 
+// Oltre questo punto la richiesta consuma quota Sentinel Hub (Process API, a
+// consumo). L'endpoint è deliberatamente pubblico — la mappa è consultabile
+// senza login e il layer satellitare è offerto anche agli anonimi — quindi va
+// protetto dall'abuso: senza limite chiunque conosca l'URL potrebbe prosciugare
+// la quota iterando z/x/y. Le tile già in cache sono servite sopra e non contano.
+// Soglia più bassa del meteo: qui ogni chiamata è più costosa.
+if (!tile_rate_ok('satellite', 500)) {
+    http_response_code(429);
+    header('Retry-After: 3600');
+    exit;
+}
+
+/**
+ * Limite di chiamate upstream per IP e per ora, con contatore su file (niente
+ * DB: questo endpoint viene invocato a raffica, decine di tile per pannata).
+ * Duplicata in weather_tile.php per la stessa ragione delle altre funzioni
+ * ripetute nel progetto: nessun include condiviso fra i due proxy.
+ */
+function tile_rate_ok(string $bucket, int $maxPerHour): bool {
+    $ip = $_SERVER['REMOTE_ADDR'] ?? 'unknown';
+    $dir = __DIR__ . '/cache/ratelimit';
+    if (!is_dir($dir) && !@mkdir($dir, 0775, true)) {
+        return true; // in caso di problemi sul filesystem non blocchiamo il servizio
+    }
+    $slot = $bucket . '_' . date('YmdH') . '_' . hash('sha256', $ip);
+    $file = "$dir/$slot";
+
+    if (random_int(1, 200) === 1) {
+        foreach (glob("$dir/*") ?: [] as $old) {
+            if (is_file($old) && (time() - filemtime($old)) > 7200) {
+                @unlink($old);
+            }
+        }
+    }
+
+    $n = (int) @file_get_contents($file);
+    if ($n >= $maxPerHour) {
+        return false;
+    }
+    @file_put_contents($file, (string) ($n + 1), LOCK_EX);
+    return true;
+}
+
+/**
+ * Eviction della cache delle tile (finora inesistente: il TTL era controllato
+ * solo in lettura, quindi una tile richiesta una volta e mai più restava su
+ * disco per sempre). Qui la soglia è più alta che per il meteo: le immagini
+ * satellitari cambiano di rado e ricrearle costa quota. Probabilistica, 1 su 500.
+ */
+function tile_cache_evict(string $subdir, int $olderThan = 2592000): void {
+    if (random_int(1, 500) !== 1) {
+        return;
+    }
+    $root = __DIR__ . '/cache/' . $subdir;
+    if (!is_dir($root)) {
+        return;
+    }
+    $it = new RecursiveIteratorIterator(
+        new RecursiveDirectoryIterator($root, FilesystemIterator::SKIP_DOTS),
+        RecursiveIteratorIterator::CHILD_FIRST
+    );
+    $now = time();
+    foreach ($it as $f) {
+        if ($f->isFile() && ($now - $f->getMTime()) > $olderThan) {
+            @unlink($f->getPathname());
+        } elseif ($f->isDir()) {
+            @rmdir($f->getPathname()); // riesce solo se rimasta vuota
+        }
+    }
+}
+tile_cache_evict('satellite');
+
 $token = getSentinelHubToken();
 if (!$token) {
     if (file_exists($cacheFile)) { header('Content-Type: image/jpeg'); readfile($cacheFile); exit; }

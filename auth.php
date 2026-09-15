@@ -16,6 +16,13 @@ define('AUTH_DB_PATH', __DIR__ . '/auth.db');
 
 const ROLE_RANK = ['pubblico' => 0, 'collaboratore' => 1, 'admin' => 2];
 
+// Conservazione dei dati di servizio (vedi prune_old_logs()). Valori generosi:
+// sono log di audit, la potatura serve solo a evitare crescita illimitata.
+// Gli alert non letti sono esclusi dalla potatura a prescindere dall'età.
+const ACCESS_LOG_RETENTION_DAYS      = 365;
+const LOGIN_ATTEMPTS_RETENTION_DAYS  = 90;
+const ALERTS_RETENTION_DAYS          = 365;
+
 // ---------------------------------------------------------------------------
 // Connessione DB (auth.db, separato da events.db per non contendere le
 // scritture di logging con gli import cron sui dati di volo)
@@ -190,6 +197,19 @@ function auth_bootstrap(): void {
             mkdir($sessionPath, 0770, true);
         }
         session_save_path($sessionPath);
+
+        // Garbage collection delle sessioni: da attivare ESPLICITAMENTE qui.
+        // Su Debian session.gc_probability vale 0, perché la pulizia è delegata
+        // allo script di sistema /usr/lib/php/sessionclean — che però legge la
+        // save_path dai file php.ini e quindi NON vede questa directory, scelta
+        // a runtime. Risultato senza queste righe: i file di sessione non venivano
+        // mai rimossi (5.778 file accumulati, il più vecchio di oltre due settimane)
+        // e soprattutto una sessione rubata restava valida per sempre, dato che
+        // gc_maxlifetime non veniva mai applicato da nessuno.
+        // 1 richiesta su 100 esegue la pulizia: costo trascurabile, nessun cron.
+        ini_set('session.gc_probability', '1');
+        ini_set('session.gc_divisor', '100');
+        ini_set('session.gc_maxlifetime', '43200'); // 12 ore di inattività
         session_set_cookie_params([
             'lifetime' => 0,
             'path' => '/',
@@ -203,6 +223,45 @@ function auth_bootstrap(): void {
         $_SESSION['csrf_token'] = bin2hex(random_bytes(32));
     }
     get_auth_db(); // assicura che le tabelle esistano
+    revalidate_session_user();
+}
+
+/**
+ * Riallinea la sessione allo stato attuale dell'utente nel database.
+ *
+ * Ruolo e stato attivo venivano copiati in sessione al momento del login e non
+ * più riletti: disattivare un account o retrocederne il ruolo da admin_users.php
+ * non aveva quindi alcun effetto finché quella persona restava collegata — e una
+ * sessione, prima dell'introduzione della garbage collection, non scadeva mai.
+ * Per un pannello che permette di revocare un accesso è il comportamento
+ * sbagliato: la revoca deve avere effetto alla richiesta successiva.
+ *
+ * Costo: una lettura per chiave primaria su una tabella di pochi record, del
+ * tutto trascurabile rispetto al resto della pagina.
+ */
+function revalidate_session_user(): void {
+    if (empty($_SESSION['user']['id'])) {
+        return;
+    }
+    try {
+        $stmt = get_auth_db()->prepare("SELECT username, role, display_name, is_active FROM users WHERE id = ?");
+        $stmt->bindValue(1, (int)$_SESSION['user']['id'], SQLITE3_INTEGER);
+        $row = $stmt->execute()->fetchArray(SQLITE3_ASSOC);
+    } catch (Exception $e) {
+        return; // problema temporaneo sul database: non buttiamo fuori nessuno
+    }
+
+    // Utente eliminato o disattivato: la sessione decade subito.
+    if (!$row || !(int)$row['is_active']) {
+        $_SESSION['user'] = null;
+        unset($_SESSION['user']);
+        return;
+    }
+
+    // Ruolo o nome cambiati nel frattempo: si adegua la sessione in corso.
+    $_SESSION['user']['role'] = $row['role'];
+    $_SESSION['user']['username'] = $row['username'];
+    $_SESSION['user']['display_name'] = $row['display_name'] ?: $row['username'];
 }
 
 // ---------------------------------------------------------------------------
@@ -399,10 +458,33 @@ function log_access(): void {
             $stmt->bindValue(9, substr($_SERVER['HTTP_USER_AGENT'] ?? '', 0, 500));
             $stmt->bindValue(10, substr($_SERVER['HTTP_REFERER'] ?? '', 0, 500));
             $stmt->execute();
+
+            // Retention: senza potatura queste tabelle crescono all'infinito —
+            // access_log guadagna una riga a ogni pageview e aveva già superato
+            // in dimensione events.db (3,6 MB contro 3,3 MB), pur contenendo
+            // dati di servizio e non il dominio dell'applicazione.
+            // Potatura probabilistica (1 richiesta su 500) invece di un cron:
+            // resta autonoma su qualunque deploy, senza configurazione.
+            if (random_int(1, 500) === 1) {
+                prune_old_logs();
+            }
         } catch (Exception $e) {
             // Un errore di logging non deve mai rompere la risposta della pagina.
         }
     });
+}
+
+/**
+ * Elimina le righe di servizio più vecchie delle soglie di conservazione.
+ * Soglie volutamente generose: sono dati di audit, meglio abbondare.
+ * Gli alert NON letti non vengono mai rimossi, indipendentemente dall'età:
+ * sono segnalazioni che l'operatore non ha ancora visionato.
+ */
+function prune_old_logs(): void {
+    $db = get_auth_db();
+    $db->exec("DELETE FROM access_log     WHERE ts         < datetime('now', '-" . ACCESS_LOG_RETENTION_DAYS . " days')");
+    $db->exec("DELETE FROM login_attempts WHERE created_at < datetime('now', '-" . LOGIN_ATTEMPTS_RETENTION_DAYS . " days')");
+    $db->exec("DELETE FROM alerts         WHERE is_read = 1 AND created_at < datetime('now', '-" . ALERTS_RETENTION_DAYS . " days')");
 }
 
 // ---------------------------------------------------------------------------

@@ -34,16 +34,26 @@ if (php_sapi_name() !== 'cli') { http_response_code(403); exit; }
  * ricalcolo automatico, è una scelta deliberata.
  */
 
+require_once __DIR__ . '/geo_lib.php';
+
 $dbPath = __DIR__ . '/events.db';
 $db = new SQLite3($dbPath);
 $db->enableExceptions(true);
-// events.db non usa WAL (scelta deliberata, vedi fix_permissions.sh): scritture
-// concorrenti di csv_to_db.py/alert_scan.php (ogni 5 min) possono tenere un lock
-// per una frazione di secondo. Senza busyTimeout, SQLite3 lancia subito
-// "database is locked" invece di attendere — nel log storico (rarity.log) questo
-// ha fatto fallire il 73% delle esecuzioni orarie del cron. alert_scan.php ha
-// già lo stesso fix (busyTimeout(5000)) per lo stesso motivo.
-$db->busyTimeout(5000);
+// events.db non usa WAL (scelta deliberata, vedi fix_permissions.sh) e questo
+// script è, con csv_to_db.py (ogni 5 min), l'unico altro SCRITTORE del database:
+// la ricostruzione della cache è una transazione lunga (DELETE + ~750 INSERT)
+// che collide regolarmente con l'import.
+//
+// Storia del problema: senza busyTimeout falliva il 73% delle esecuzioni orarie;
+// con busyTimeout(5000) + "BEGIN TRANSACTION" falliva ancora il 56% (165 successi
+// contro 212 "database is locked" in rarity.log). Il motivo è che BEGIN TRANSACTION
+// è DEFERRED: il lock di scrittura viene richiesto solo alla prima INSERT/DELETE,
+// e in quel punto SQLite può restituire SQLITE_BUSY senza nemmeno invocare il busy
+// handler (non può attendere senza rischiare un deadlock). BEGIN IMMEDIATE invece
+// acquisisce subito il lock di scrittura, dove il busy handler si applica davvero.
+// Per confronto: alert_scan.php gira ogni 5 min sullo stesso database e non è mai
+// fallito, perché apre events.db in sola lettura.
+$db->busyTimeout(30000);
 
 $db->exec("CREATE TABLE IF NOT EXISTS rarity_cache (hex TEXT PRIMARY KEY, seen_count INTEGER, rarity TEXT, composite_score INTEGER)");
 // Migrazione idempotente: aggiunge la colonna se la cache esisteva già dalla versione precedente (solo percentili).
@@ -55,70 +65,6 @@ while ($c = $cols->fetchArray(SQLITE3_ASSOC)) {
 if (!$hasScoreCol) {
     $db->exec("ALTER TABLE rarity_cache ADD COLUMN composite_score INTEGER");
 }
-
-/**
- * Deriva il codice operatore/forza aerea a 3 lettere da un callsign
- * (es. "IAM9001" -> "IAM"). Stessa logica di index.php/stats.php.
- */
-function operatorFromCallsign($callsign) {
-    $cs = strtoupper(trim((string)$callsign));
-    if (preg_match('/^[A-Z]{3}\d/', $cs)) {
-        return substr($cs, 0, 3);
-    }
-    return null;
-}
-
-/** Stessa mappatura prefissi reg -> nazione usata altrove nel portale. */
-function getCountryFromReg($reg) {
-    $map = [
-        'MM' => 'IT', 'I-' => 'IT', 'F-' => 'FR', 'D-' => 'DE', 'G-' => 'GB',
-        'EC-' => 'ES', 'PH-' => 'NL', 'OO-' => 'BE', 'HB-' => 'CH', 'OE-' => 'AT',
-        'OK-' => 'CZ', 'OM-' => 'SK', 'SP-' => 'PL', 'HA-' => 'HU', 'YR-' => 'RO',
-        'LZ-' => 'BG', '9A-' => 'HR', 'S5-' => 'SI', 'YU-' => 'RS', 'Z3-' => 'MK',
-        'T7-' => 'SM', '3A-' => 'MC', '9H-' => 'MT', '5B-' => 'CY', 'TC-' => 'TR',
-        '4X-' => 'IL', 'SU-' => 'EG', '5A-' => 'LY', 'CN-' => 'MA', '7T-' => 'DZ',
-        'TS-' => 'TN', 'JY-' => 'JO', 'OD-' => 'LB', 'YK-' => 'SY', 'EP-' => 'IR',
-        'A6-' => 'AE', 'A7-' => 'QA', '9K-' => 'KW', 'VT-' => 'IN', 'AP-' => 'PK',
-        'B-' => 'CN', 'JA-' => 'JP', 'HL-' => 'KR', 'HS-' => 'TH', 'VN-' => 'VN',
-        '9V-' => 'SG', 'PK-' => 'ID', '9M-' => 'MY', 'RP-' => 'PH', 'ZK-' => 'NZ',
-        'VH-' => 'AU', 'C-' => 'CA', 'N' => 'US', 'XA-' => 'MX', 'XB-' => 'MX',
-        'XC-' => 'MX', 'PT-' => 'BR', 'LV-' => 'AR', 'CC-' => 'CL', 'HK-' => 'CO',
-        'OB-' => 'PE', 'YV-' => 'VE', 'TI-' => 'CR', 'TG-' => 'GT', 'HR-' => 'HN',
-        'YS-' => 'SV', 'YN-' => 'NI', 'HP-' => 'PA', 'CU-' => 'CU', 'HI-' => 'DO',
-        'V2-' => 'AG', '8P-' => 'BB', 'J3-' => 'GD', '9Y-' => 'TT', 'PJ-' => 'SX'
-    ];
-    if (empty($reg)) return null;
-    $reg = strtoupper(trim($reg));
-    foreach ($map as $prefix => $country) {
-        if (strpos($reg, $prefix) === 0) return $country;
-    }
-    return null;
-}
-
-/** Stessa mappatura prefissi callsign -> nazione usata altrove nel portale. */
-function getCountryFromCallsign($callsign) {
-    $map = [
-        'IAM' => 'IT', 'RCH' => 'US', 'CNV' => 'US', 'CTM' => 'FR',
-        'PLF' => 'PL', 'GAF' => 'DE', 'BAF' => 'BE', 'RNLAF' => 'NL', 'HUAF' => 'HU',
-        'ROF' => 'RO', 'SVK' => 'SK', 'CZE' => 'CZ', 'ASH' => 'US', 'RFR' => 'US',
-        'RRS' => 'GB', 'RRR' => 'GB', 'SNAKE' => 'US', 'VIPER' => 'US', 'LION' => 'FR'
-    ];
-    if (empty($callsign)) return null;
-    $callsign = strtoupper(trim($callsign));
-    foreach ($map as $prefix => $country) {
-        if (strpos($callsign, $prefix) === 0) return $country;
-    }
-    return null;
-}
-
-function getCountryCode($reg, $callsign) {
-    $c = getCountryFromReg($reg);
-    if ($c !== null) return $c;
-    $c = getCountryFromCallsign($callsign);
-    if ($c !== null) return $c;
-    return 'ZZ';
-}
-
 /**
  * Converte la dimensione di un gruppo (quanti elementi condividono questo
  * stesso valore) in punti rarità 0-5: più piccolo il gruppo, più alto il
@@ -135,13 +81,22 @@ function rarityPoints($groupSize) {
 }
 
 // --- Passata 1: raccogli i dati e conta le dimensioni dei gruppi ----------
+// Regole personalizzate di nazionalità: stessa fonte usata da index.php, map.php
+// e stats.php. Senza di esse la nazionalità qui calcolata divergerebbe da quella
+// mostrata all'utente, falsando il punteggio di rarità (vedi getCountryCode()).
+$customRules = [];
+$resRules = $db->query("SELECT field, pattern, country_code FROM country_rules");
+while ($rule = $resRules->fetchArray(SQLITE3_ASSOC)) {
+    $customRules[] = $rule;
+}
+
 $rows = [];
 $operatorCounts = [];
 $countryCounts = [];
 $res = $db->query("SELECT hex, seen_count, reg, callsign FROM aircraft");
 while ($r = $res->fetchArray(SQLITE3_ASSOC)) {
     $op = operatorFromCallsign($r['callsign']);
-    $cc = getCountryCode($r['reg'], $r['callsign']);
+    $cc = getCountryCode($r['hex'], $r['reg'], $r['callsign'], $customRules);
     $r['op'] = $op;
     $r['cc'] = $cc;
     if ($op !== null) {
@@ -164,30 +119,59 @@ function rarityTier($score) {
     return 'Common';
 }
 
-$db->exec("BEGIN TRANSACTION");
-$db->exec("DELETE FROM rarity_cache");
-$stmt = $db->prepare("INSERT INTO rarity_cache (hex, seen_count, rarity, composite_score) VALUES (?, ?, ?, ?)");
-
+// Scrittura in transazione, con ritentativi: se l'import (csv_to_db.py) sta
+// scrivendo proprio adesso, aspettare e riprovare è preferibile sia a fallire
+// con un fatal error (che lasciava la cache non aggiornata per un'ora intera)
+// sia a lasciare la vecchia cache senza dirlo. La cache viene comunque
+// rigenerata per intero al tentativo successivo: nessun rischio di stato parziale.
 $tierCounts = ['Mythic' => 0, 'Legendary' => 0, 'Epic' => 0, 'Rare' => 0, 'Uncommon' => 0, 'Common' => 0];
-foreach ($rows as $r) {
-    $scPts = rarityPoints((int)$r['seen_count']);
-    // Operatore non derivabile dal callsign (es. nomignoli di reparto irregolari): punteggio
-    // neutro (metà scala), per non premiare né penalizzare un formato di callsign atipico.
-    $opPts = $r['op'] !== null ? rarityPoints($operatorCounts[$r['op']]) : 2.5;
-    $ccPts = rarityPoints($countryCounts[$r['cc']]);
+$maxAttempts = 3;
 
-    $composite = (int) round($scPts * 2 + $opPts + $ccPts);
-    $tier = rarityTier($composite);
-    $tierCounts[$tier]++;
+for ($attempt = 1; $attempt <= $maxAttempts; $attempt++) {
+    $tierCounts = array_fill_keys(array_keys($tierCounts), 0);
+    try {
+        // BEGIN IMMEDIATE (non DEFERRED): acquisisce subito il lock di scrittura,
+        // l'unico punto in cui busyTimeout viene effettivamente rispettato.
+        $db->exec("BEGIN IMMEDIATE");
+        $db->exec("DELETE FROM rarity_cache");
+        $stmt = $db->prepare("INSERT INTO rarity_cache (hex, seen_count, rarity, composite_score) VALUES (?, ?, ?, ?)");
 
-    $stmt->bindValue(1, $r['hex'], SQLITE3_TEXT);
-    $stmt->bindValue(2, $r['seen_count'], SQLITE3_INTEGER);
-    $stmt->bindValue(3, $tier, SQLITE3_TEXT);
-    $stmt->bindValue(4, $composite, SQLITE3_INTEGER);
-    $stmt->execute();
-    $stmt->reset();
+        foreach ($rows as $r) {
+            $scPts = rarityPoints((int)$r['seen_count']);
+            // Operatore non derivabile dal callsign (es. nomignoli di reparto irregolari): punteggio
+            // neutro (metà scala), per non premiare né penalizzare un formato di callsign atipico.
+            $opPts = $r['op'] !== null ? rarityPoints($operatorCounts[$r['op']]) : 2.5;
+            $ccPts = rarityPoints($countryCounts[$r['cc']]);
+
+            $composite = (int) round($scPts * 2 + $opPts + $ccPts);
+            $tier = rarityTier($composite);
+            $tierCounts[$tier]++;
+
+            $stmt->bindValue(1, $r['hex'], SQLITE3_TEXT);
+            $stmt->bindValue(2, $r['seen_count'], SQLITE3_INTEGER);
+            $stmt->bindValue(3, $tier, SQLITE3_TEXT);
+            $stmt->bindValue(4, $composite, SQLITE3_INTEGER);
+            $stmt->execute();
+            $stmt->reset();
+        }
+        $db->exec("COMMIT");
+        break; // riuscito
+    } catch (Exception $e) {
+        // Il ROLLBACK va protetto a sua volta: con enableExceptions(true) un
+        // "cannot rollback - no transaction is active" (caso tipico quando è
+        // stato proprio il BEGIN a fallire) lancerebbe una NUOVA eccezione,
+        // che sfuggirebbe a questo catch mascherando l'errore originale.
+        // L'operatore @ non basta: sopprime i warning, non le eccezioni.
+        try { $db->exec("ROLLBACK"); } catch (Exception $ignored) {}
+        if ($attempt < $maxAttempts) {
+            sleep(5 * $attempt); // backoff: 5s, poi 10s
+            continue;
+        }
+        fwrite(STDERR, date('c') . " update_rarity: cache NON aggiornata dopo $maxAttempts tentativi: "
+            . $e->getMessage() . " (la cache precedente resta valida)\n");
+        exit(1);
+    }
 }
-$db->exec("COMMIT");
 
 $count = array_sum($tierCounts);
 echo "Cache rarità aggiornata: $count hex classificati.\n";

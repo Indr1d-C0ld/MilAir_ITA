@@ -95,9 +95,11 @@ Tutti e tre vengono creati automaticamente (schema `CREATE TABLE IF NOT EXISTS`)
 ├── fetch_assets_now.php                                     → recupero istantaneo on-demand di un singolo asset (via fetch() da index.php)
 ├── download_*.php                                           → script CLI (cron) di arricchimento (foto/silhouette/disegni/loghi operatore)
 ├── fetch_news.php, fetch_notams.php, news_lib.php           → aggregazione RSS e NOTAM
-├── satellite_tile.php, weather_tile.php                     → proxy server-side per i layer mappa opzionali
+├── geo_lib.php                                              → nazionalità, operatore e pattern matching (definizioni canoniche, usate da tutte le pagine)
+├── satellite_tile.php, weather_tile.php                     → proxy server-side per i layer mappa opzionali (con limite per IP e cache a scadenza)
 ├── flight_mil_ita.py, csv_to_db.py                          → pipeline di raccolta/importazione dati
-├── geo_secrets.php.example, map_secrets.php.example         → template chiavi API (copiare senza ".example")
+├── geo_secrets.php.example, map_secrets.php.example,
+│   ai_secrets.php.example                                   → template chiavi API (copiare senza ".example")
 ├── crontab.txt, milair-logger.service, fix_permissions.sh   → esempi di configurazione per il deploy
 ├── style.css                                                → stile applicazione
 ├── leaflet/                                                 → libreria Leaflet + plugin (draw, heat), self-hosted
@@ -187,9 +189,15 @@ Misure di sicurezza implementate:
 - Password con hash tramite `password_hash()`/`password_verify()` di PHP (bcrypt), minimo 10 caratteri
 - Protezione CSRF su tutte le form (`require_csrf()`/`csrf_field()`)
 - Risposta generica e a tempo costante su login falliti (utente inesistente, password errata o account disattivo producono lo stesso esito, per non facilitare l'enumerazione utenti)
-- Log di accessi e tentativi di login in `auth.db`
-- Modulo pubblico di richiesta accesso con honeypot anti-bot, soggetto ad approvazione manuale di un admin
-- `.htaccess` nega l'accesso HTTP diretto a: file di segreti, database SQLite, file `.json`/`.csv`/`.bak` e alla cartella `cache/`
+- Limite sui tentativi di login per utente **e** per indirizzo IP
+- Ruolo e stato dell'account riletti dal database a ogni richiesta: disattivare o retrocedere un utente ha effetto immediato anche sulle sessioni già aperte
+- Sessioni in directory dedicata, con garbage collection esplicita e scadenza dopo 12 ore di inattività (su Debian la pulizia di sistema non vedrebbe una `save_path` impostata a runtime)
+- Log di accessi e tentativi di login in `auth.db`, con conservazione limitata nel tempo (vedi le costanti `*_RETENTION_DAYS` in [`auth.php`](auth.php))
+- Modulo pubblico di richiesta accesso con honeypot anti-bot e limite per IP, soggetto ad approvazione manuale di un admin
+- Proxy dei layer mappa con limite di chiamate per IP: gli endpoint sono pubblici (la mappa è consultabile senza login) ma non possono essere usati per prosciugare la quota delle API esterne
+- Header di sicurezza HTTP (`X-Content-Type-Options`, `X-Frame-Options`, `Referrer-Policy`, `Strict-Transport-Security`, `Permissions-Policy`, `Content-Security-Policy: frame-ancestors`)
+- Messaggi d'errore generici verso l'utente, dettaglio tecnico solo nel log del server
+- `.htaccess` nega l'accesso HTTP diretto a: file di segreti, database SQLite, file `.json`/`.csv`/`.bak`, log, script CLI, librerie di sole funzioni e cartella `cache/`
 
 ## Fonti dati e crediti
 

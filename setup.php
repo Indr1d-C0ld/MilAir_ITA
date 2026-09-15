@@ -55,7 +55,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             }
         } catch (Exception $e) {
             $db->exec('ROLLBACK');
-            $error = 'Errore durante la creazione dell\'account: ' . $e->getMessage();
+            error_log('setup.php: ' . $e->getMessage());
+            $error = 'Errore durante la creazione dell\'account.';
         }
     }
 }

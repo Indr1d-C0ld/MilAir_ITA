@@ -41,7 +41,13 @@ $hexLower = strtolower($hex);
 
 $reg = trim($_POST['reg'] ?? '');
 $callsign = trim($_POST['callsign'] ?? '');
-$modelT = strtoupper(trim($_POST['model_t'] ?? ''));
+// sanitizeCode() e non solo strtoupper/trim: $modelT finisce nel NOME DI FILE
+// della foto modello (vedi $modelForPhoto più sotto), quindi deve essere ridotto
+// ai soli caratteri sicuri. Senza, un valore come "../../EVIL" sopravviveva
+// intatto fino a imagejpeg(), permettendo di scrivere .jpg fuori da photos/.
+// La stessa sanificazione era già applicata al ramo 'current_model_t': la
+// differenza fra i due era una svista, non una scelta.
+$modelT = sanitizeCode($_POST['model_t'] ?? '');
 $clearOverride = isset($_POST['clear_override']);
 
 try {
@@ -73,7 +79,8 @@ try {
     }
 } catch (Exception $e) {
     http_response_code(500);
-    respond(false, ['error' => $e->getMessage()]);
+    error_log('save_identity.php: ' . $e->getMessage());
+    respond(false, ['error' => 'salvataggio non riuscito']);
 }
 
 // ---------------------------------------------------------------------------

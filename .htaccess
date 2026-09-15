@@ -1,3 +1,34 @@
+# ---------------------------------------------------------------------------
+# Header di sicurezza
+# ---------------------------------------------------------------------------
+<IfModule mod_headers.c>
+    # Impedisce al browser di "indovinare" un tipo diverso da quello dichiarato
+    # (es. interpretare come HTML un .jpg caricato dagli utenti).
+    Header always set X-Content-Type-Options "nosniff"
+
+    # Anti-clickjacking: la pagina non può essere incorniciata da altri siti.
+    # X-Frame-Options per i browser vecchi, frame-ancestors per quelli moderni.
+    Header always set X-Frame-Options "SAMEORIGIN"
+
+    # Non far trapelare l'URL completo (con i filtri di ricerca) verso siti terzi
+    # raggiunti dai link esterni della tabella (FlightRadar24, JetPhotos, ecc.).
+    Header always set Referrer-Policy "strict-origin-when-cross-origin"
+
+    # Il vhost serve solo HTTPS: impone al browser di non riprovare in chiaro.
+    # Senza includeSubDomains né preload, per non vincolare altri host del dominio.
+    Header always set Strict-Transport-Security "max-age=15552000"
+
+    # Niente API del browser che questa applicazione non usa.
+    Header always set Permissions-Policy "geolocation=(), microphone=(), camera=(), payment=(), usb=()"
+
+    # CSP volutamente limitata a frame-ancestors: l'applicazione usa script e
+    # stili inline in quasi tutte le pagine (convenzione del progetto), quindi
+    # una default-src restrittiva richiederebbe 'unsafe-inline' — che ne
+    # annullerebbe il beneficio principale. Una CSP piena avrebbe senso solo
+    # dopo aver spostato gli inline in file separati: lavoro ampio, non fatto qui.
+    Header always set Content-Security-Policy "frame-ancestors 'self'"
+</IfModule>
+
 # Nega l'accesso diretto ai file contenenti le API key (mai serviti al browser,
 # usati solo lato server via require_once)
 <FilesMatch "^(map_secrets|geo_secrets|ai_secrets)\.php$">
@@ -33,6 +64,14 @@ RewriteRule ^cache/ - [F,L]
     Require all denied
 </FilesMatch>
 <FilesMatch "_old$">
+    Require all denied
+</FilesMatch>
+
+# Librerie di sole funzioni, incluse da altri script e mai richieste dal browser.
+# Oggi restituiscono una pagina vuota (non producono output), quindi non c'è una
+# fuga di dati: negarle è difesa in profondità, perché un errore futuro in una di
+# esse potrebbe altrimenti diventare visibile all'esterno.
+<FilesMatch "^(auth|geo_lib|diary_lib|news_lib|ai_lib)\.php$">
     Require all denied
 </FilesMatch>
 <Files "crontab.txt">

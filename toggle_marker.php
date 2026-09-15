@@ -47,10 +47,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['emoji'])) {
             if ($isAjax) {
                 http_response_code(500);
                 header('Content-Type: application/json');
-                echo json_encode(['ok' => false, 'error' => $e->getMessage()]);
+                error_log('toggle_marker.php: ' . $e->getMessage());
+                echo json_encode(['ok' => false, 'error' => 'salvataggio non riuscito']);
                 exit;
             }
-            die("Errore: " . htmlspecialchars($e->getMessage()));
+            error_log('toggle_marker.php: ' . $e->getMessage());
+            die("Errore durante il salvataggio del contrassegno.");
         }
         if ($isAjax) {
             header('Content-Type: application/json');

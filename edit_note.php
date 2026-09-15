@@ -22,7 +22,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         header("Location: index.php");
         exit;
     } catch (Exception $e) {
-        die("Errore salvataggio: " . htmlspecialchars($e->getMessage()));
+        error_log('edit_note.php: ' . $e->getMessage());
+        die("Errore durante il salvataggio della nota.");
     }
 }
 

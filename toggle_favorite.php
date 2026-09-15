@@ -63,8 +63,10 @@ try {
     http_response_code(500);
     if ($isAjax) {
         header('Content-Type: application/json');
-        echo json_encode(['ok' => false, 'error' => $e->getMessage()]);
+        error_log('toggle_favorite.php: ' . $e->getMessage());
+        echo json_encode(['ok' => false, 'error' => 'salvataggio non riuscito']);
         exit;
     }
-    die("Errore: " . htmlspecialchars($e->getMessage()));
+    error_log('toggle_favorite.php: ' . $e->getMessage());
+    die("Errore durante il salvataggio del preferito.");
 }

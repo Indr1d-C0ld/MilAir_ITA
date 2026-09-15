@@ -1,164 +1,10 @@
 <?php
 require_once __DIR__ . '/auth.php';
+require_once __DIR__ . '/geo_lib.php';
 auth_bootstrap();
 log_access();
 
 $dbPath = __DIR__ . '/events.db';
-
-// --------------------- FUNZIONI DI MAPPING NAZIONALITÀ ---------------------
-/**
- * Confronta un valore con un pattern che può contenere wildcard '*' oppure
- * un intervallo "BASSO - ALTO" (es. "E00000 - E3FFFF"). Stessa logica di
- * index.php/map.php/rules.php — vedi lì per il dettaglio.
- */
-function patternMatch($value, $pattern) {
-    $value = strtoupper(trim($value));
-    $pattern = trim($pattern);
-
-    if (preg_match('/^(\S+)\s+-\s+(\S+)$/', $pattern, $m)) {
-        return rangeMatch($value, $m[1], $m[2]);
-    }
-
-    $pattern = strtoupper($pattern);
-    if (strpos($pattern, '*') === false) {
-        return strpos($value, $pattern) === 0;
-    }
-
-    $regex = '/^' . str_replace('\*', '.*', preg_quote($pattern, '/')) . '$/i';
-    return preg_match($regex, $value) === 1;
-}
-
-function rangeMatch($value, $lowPattern, $highPattern) {
-    $low = strtoupper(rtrim(trim($lowPattern), '*'));
-    $high = strtoupper(rtrim(trim($highPattern), '*'));
-    if ($low === '' || $high === '') {
-        return false;
-    }
-    $lowLen = strlen($low);
-    $highLen = strlen($high);
-    $vLow = strlen($value) >= $lowLen ? substr($value, 0, $lowLen) : str_pad($value, $lowLen, '0');
-    $vHigh = strlen($value) >= $highLen ? substr($value, 0, $highLen) : str_pad($value, $highLen, '0');
-    return $vLow >= $low && $vHigh <= $high;
-}
-
-function getCountryFromReg($reg) {
-    $map = [
-        'MM' => 'IT', 'I-' => 'IT', 'F-' => 'FR', 'D-' => 'DE', 'G-' => 'GB',
-        'EC-' => 'ES', 'PH-' => 'NL', 'OO-' => 'BE', 'HB-' => 'CH', 'OE-' => 'AT',
-        'OK-' => 'CZ', 'OM-' => 'SK', 'SP-' => 'PL', 'HA-' => 'HU', 'YR-' => 'RO',
-        'LZ-' => 'BG', '9A-' => 'HR', 'S5-' => 'SI', 'YU-' => 'RS', 'Z3-' => 'MK',
-        'T7-' => 'SM', '3A-' => 'MC', '9H-' => 'MT', '5B-' => 'CY', 'TC-' => 'TR',
-        '4X-' => 'IL', 'SU-' => 'EG', '5A-' => 'LY', 'CN-' => 'MA', '7T-' => 'DZ',
-        'TS-' => 'TN', 'JY-' => 'JO', 'OD-' => 'LB', 'YK-' => 'SY', 'EP-' => 'IR',
-        'A6-' => 'AE', 'A7-' => 'QA', '9K-' => 'KW', 'VT-' => 'IN', 'AP-' => 'PK',
-        'B-' => 'CN', 'JA-' => 'JP', 'HL-' => 'KR', 'HS-' => 'TH', 'VN-' => 'VN',
-        '9V-' => 'SG', 'PK-' => 'ID', '9M-' => 'MY', 'RP-' => 'PH', 'ZK-' => 'NZ',
-        'VH-' => 'AU', 'C-' => 'CA', 'N' => 'US', 'XA-' => 'MX', 'XB-' => 'MX',
-        'XC-' => 'MX', 'PT-' => 'BR', 'LV-' => 'AR', 'CC-' => 'CL', 'HK-' => 'CO',
-        'OB-' => 'PE', 'YV-' => 'VE', 'TI-' => 'CR', 'TG-' => 'GT', 'HR-' => 'HN',
-        'YS-' => 'SV', 'YN-' => 'NI', 'HP-' => 'PA', 'CU-' => 'CU', 'HI-' => 'DO',
-        'V2-' => 'AG', '8P-' => 'BB', 'J3-' => 'GD', '9Y-' => 'TT', 'PJ-' => 'SX'
-    ];
-    if (empty($reg)) return null;
-    $reg = strtoupper(trim($reg));
-    foreach ($map as $prefix => $country) {
-        if (strpos($reg, $prefix) === 0) return $country;
-    }
-    return null;
-}
-
-function getCountryFromCallsign($callsign) {
-    $map = [
-        'IAM' => 'IT', 'RCH' => 'US', 'CNV' => 'US', 'CTM' => 'FR',
-        'PLF' => 'PL', 'GAF' => 'DE', 'BAF' => 'BE', 'RNLAF' => 'NL', 'HUAF' => 'HU',
-        'ROF' => 'RO', 'SVK' => 'SK', 'CZE' => 'CZ', 'ASH' => 'US', 'RFR' => 'US',
-        'RRS' => 'GB', 'RRR' => 'GB', 'SNAKE' => 'US', 'VIPER' => 'US', 'LION' => 'FR'
-    ];
-    if (empty($callsign)) return null;
-    $callsign = strtoupper(trim($callsign));
-    foreach ($map as $prefix => $country) {
-        if (strpos($callsign, $prefix) === 0) return $country;
-    }
-    return null;
-}
-
-function getCountryCode($hex, $reg, $callsign, $customRules = []) {
-    // Regole personalizzate (rules.php, tabella country_rules): coprono l'intera
-    // allocazione ICAO per blocco hex, sono la fonte principale — le mappature
-    // per prefisso reg/callsign sotto sono solo un fallback secondario.
-    foreach ($customRules as $rule) {
-        $fieldValue = null;
-        if ($rule['field'] === 'hex') $fieldValue = strtoupper(trim($hex));
-        elseif ($rule['field'] === 'reg') $fieldValue = strtoupper(trim($reg ?? ''));
-        elseif ($rule['field'] === 'callsign') $fieldValue = strtoupper(trim($callsign ?? ''));
-
-        if ($fieldValue !== null && patternMatch($fieldValue, $rule['pattern'])) {
-            return strtoupper($rule['country_code']);
-        }
-    }
-
-    $country = getCountryFromReg($reg);
-    if ($country !== null) return $country;
-    $country = getCountryFromCallsign($callsign);
-    if ($country !== null) return $country;
-    return 'ZZ';
-}
-
-/**
- * Deriva il codice operatore/forza aerea a 3 lettere da un callsign (es.
- * "IAM9001" -> "IAM"), stessa logica di index.php — vedi lì per il dettaglio.
- */
-function operatorFromCallsign($callsign) {
-    $cs = strtoupper(trim((string)$callsign));
-    if (preg_match('/^[A-Z]{3}\d/', $cs)) {
-        return substr($cs, 0, 3);
-    }
-    return null;
-}
-
-/** Percorso web del logo compagnia/forza aerea da opflags/{CODICE}.*, o null. */
-function getOperatorLogo($code) {
-    static $memo = [];
-    $c = strtoupper(trim((string)$code));
-    if ($c === '' || !preg_match('/^[A-Z0-9]{2,4}$/', $c)) {
-        return null;
-    }
-    if (array_key_exists($c, $memo)) {
-        return $memo[$c];
-    }
-    foreach (['bmp', 'png', 'svg', 'gif'] as $ext) {
-        $f = __DIR__ . '/opflags/' . $c . '.' . $ext;
-        if (file_exists($f) && filesize($f) > 0) {
-            return $memo[$c] = 'opflags/' . $c . '.' . $ext;
-        }
-    }
-    return $memo[$c] = null;
-}
-
-/** Emoji bandiera da codice ISO 3166-1 alpha-2 (Regional Indicator Symbols). */
-function isoToFlagEmoji($code) {
-    $code = strtoupper(trim($code));
-    if (!preg_match('/^[A-Z]{2}$/', $code)) {
-        return '';
-    }
-    $offset = 0x1F1E6 - 65;
-    return mb_chr(ord($code[0]) + $offset, 'UTF-8') . mb_chr(ord($code[1]) + $offset, 'UTF-8');
-}
-
-/** HTML bandiera: SVG locale se presente in flags/, altrimenti emoji. */
-function getFlagHtml($code) {
-    $c = strtoupper(trim((string)$code));
-    if ($c === '' || $c === 'UN') {
-        return '<span title="Nazionalità non determinata">🏳️</span>';
-    }
-    $svgFile = __DIR__ . '/flags/' . $c . '.svg';
-    if (preg_match('/^[A-Z]{2}$/', $c) && file_exists($svgFile)) {
-        return '<img src="flags/' . $c . '.svg" class="flag-icon" alt="' . $c . '" title="' . $c . '">';
-    }
-    $emoji = isoToFlagEmoji($c);
-    return $emoji !== '' ? '<span title="' . htmlspecialchars($c) . '">' . $emoji . '</span>' : htmlspecialchars($c);
-}
-
 function st_bar($v, $max, $w = 90) {
     $px = $max > 0 ? max(2, (int) round($w * $v / $max)) : 2;
     return '<span class="bar" style="width:' . $px . 'px"></span>';
@@ -323,7 +169,8 @@ try {
 
 } catch (Exception $e) {
     http_response_code(500);
-    echo "Errore database: " . htmlspecialchars($e->getMessage());
+    error_log('stats.php: ' . $e->getMessage());
+    echo "Errore nel caricamento delle statistiche. Riprova tra qualche minuto.";
     exit;
 }
 ?>

@@ -14,6 +14,7 @@ if (php_sapi_name() !== 'cli') { http_response_code(403); exit; }
  * crontab, va aggiunta manualmente al crontab reale del sistema.
  */
 
+require_once __DIR__ . '/geo_lib.php';
 require_once __DIR__ . '/auth.php'; // solo per get_auth_db()/create_alert(): NON chiama auth_bootstrap() (nessuna sessione in CLI)
 
 const ALERT_COOLDOWN_MINUTES = 60;
@@ -30,42 +31,6 @@ $eventsDb->enableExceptions(true);
 $eventsDb->busyTimeout(5000);
 
 $authDb = get_auth_db();
-
-/**
- * Confronta un valore con un pattern che può contenere wildcard '*' oppure un
- * intervallo nella forma "BASSO - ALTO" — stessa logica già in uso in
- * rules.php/index.php/map.php per le regole personalizzate.
- */
-function patternMatch($value, $pattern) {
-    $value = strtoupper(trim($value));
-    $pattern = trim($pattern);
-
-    if (preg_match('/^(\S+)\s+-\s+(\S+)$/', $pattern, $m)) {
-        return rangeMatch($value, $m[1], $m[2]);
-    }
-
-    $pattern = strtoupper($pattern);
-    if (strpos($pattern, '*') === false) {
-        return strpos($value, $pattern) === 0;
-    }
-
-    $regex = '/^' . str_replace('\*', '.*', preg_quote($pattern, '/')) . '$/i';
-    return preg_match($regex, $value) === 1;
-}
-
-function rangeMatch($value, $lowPattern, $highPattern) {
-    $low = strtoupper(rtrim(trim($lowPattern), '*'));
-    $high = strtoupper(rtrim(trim($highPattern), '*'));
-    if ($low === '' || $high === '') {
-        return false;
-    }
-    $lowLen = strlen($low);
-    $highLen = strlen($high);
-    $vLow = strlen($value) >= $lowLen ? substr($value, 0, $lowLen) : str_pad($value, $lowLen, '0');
-    $vHigh = strlen($value) >= $highLen ? substr($value, 0, $highLen) : str_pad($value, $highLen, '0');
-    return $vLow >= $low && $vHigh <= $high;
-}
-
 function hexLabel(SQLite3 $eventsDb, string $hex): string {
     $stmt = $eventsDb->prepare("SELECT callsign, reg, model_t FROM aircraft WHERE hex = ?");
     $stmt->bindValue(1, $hex);

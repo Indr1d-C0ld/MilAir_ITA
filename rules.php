@@ -1,5 +1,6 @@
 <?php
 require_once __DIR__ . '/auth.php';
+require_once __DIR__ . '/geo_lib.php';
 auth_bootstrap();
 log_access();
 require_role('collaboratore');
@@ -281,7 +282,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     $msg = "$imported regole importate" . ($skipped ? ", $skipped ignorate (dati mancanti o non validi)" : '') . '.';
                 } catch (Exception $e) {
                     $db->exec('ROLLBACK');
-                    $msg = "Errore durante l'importazione: " . $e->getMessage();
+                    error_log('rules.php import: ' . $e->getMessage());
+                    $msg = "Errore durante l'importazione delle regole.";
                     $msgtype = 'error';
                 }
             }
@@ -335,22 +337,6 @@ asort($countryNames, SORT_STRING | SORT_FLAG_CASE);
 
 // Emoji disponibili per contrassegni
 $emojiOptions = ['🔴','🟠','🟡','🟢','🔵','🟣','⚫','⚪','⭐','💡','🔥','❄️','🚨','🚁','✈️','🛩️','🚀','🛰️','🌍','🌎','🌏','🔔','📌','📎','🗂️','🏁','🚩'];
-
-/**
- * Costruisce l'emoji bandiera per un codice ISO 3166-1 alpha-2 componendo i due
- * "Regional Indicator Symbol" Unicode corrispondenti. Copre automaticamente
- * qualunque codice a due lettere (incluso 'UN', riconosciuto da Unicode come
- * bandiera ONU) senza dover mantenere una mappa statica.
- */
-function isoToFlagEmoji($code) {
-    $code = strtoupper(trim($code));
-    if (!preg_match('/^[A-Z]{2}$/', $code)) {
-        return '';
-    }
-    $offset = 0x1F1E6 - 65; // 'A' -> Regional Indicator Symbol Letter A
-    return mb_chr(ord($code[0]) + $offset, 'UTF-8') . mb_chr(ord($code[1]) + $offset, 'UTF-8');
-}
-
 /**
  * Funzione per bandiere emoji (definita prima dell'uso). Gestisce anche gli
  * pseudo-codici non ISO come 'NATO', che non hanno una bandiera propria.

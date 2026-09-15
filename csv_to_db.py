@@ -58,6 +58,12 @@ def main():
         CREATE TABLE IF NOT EXISTS notes (
             hex TEXT PRIMARY KEY, note TEXT
         );
+
+        -- La chiave primaria di events e' (first_seen_utc, hex): copre le query
+        -- per intervallo di date, ma NON quelle per solo hex, che facevano una
+        -- scansione completa della tabella. Le usano track.php (traccia storica),
+        -- heatmap.php?hex=... e il Diario.
+        CREATE INDEX IF NOT EXISTS idx_events_hex ON events(hex);
     """)
 
     # Migrazione: aggiunge la colonna 'category' (categoria emettitore ADS-B, es. A7

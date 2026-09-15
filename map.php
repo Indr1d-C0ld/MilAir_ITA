@@ -1,5 +1,6 @@
 <?php
 require_once __DIR__ . '/auth.php';
+require_once __DIR__ . '/geo_lib.php';
 auth_bootstrap();
 log_access();
 
@@ -20,129 +21,6 @@ function formatDateIt($utcString) {
         return htmlspecialchars($utcString);
     }
 }
-
-/**
- * Confronta un valore con un pattern che può contenere wildcard '*'
- * oppure un intervallo nella forma "BASSO - ALTO" (spazi obbligatori attorno al trattino).
- */
-function patternMatch($value, $pattern) {
-    $value = strtoupper(trim($value));
-    $pattern = trim($pattern);
-
-    if (preg_match('/^(\S+)\s+-\s+(\S+)$/', $pattern, $m)) {
-        return rangeMatch($value, $m[1], $m[2]);
-    }
-
-    $pattern = strtoupper($pattern);
-    if (strpos($pattern, '*') === false) {
-        return strpos($value, $pattern) === 0;
-    }
-
-    $regex = '/^' . str_replace('\*', '.*', preg_quote($pattern, '/')) . '$/i';
-    return preg_match($regex, $value) === 1;
-}
-
-function rangeMatch($value, $lowPattern, $highPattern) {
-    $low = strtoupper(rtrim(trim($lowPattern), '*'));
-    $high = strtoupper(rtrim(trim($highPattern), '*'));
-    if ($low === '' || $high === '') {
-        return false;
-    }
-    $lowLen = strlen($low);
-    $highLen = strlen($high);
-    $vLow = strlen($value) >= $lowLen ? substr($value, 0, $lowLen) : str_pad($value, $lowLen, '0');
-    $vHigh = strlen($value) >= $highLen ? substr($value, 0, $highLen) : str_pad($value, $highLen, '0');
-    return $vLow >= $low && $vHigh <= $high;
-}
-
-function getCountryFromReg($reg) {
-    $map = [
-        'MM' => 'IT', 'I-' => 'IT', 'F-' => 'FR', 'D-' => 'DE', 'G-' => 'GB',
-        'EC-' => 'ES', 'PH-' => 'NL', 'OO-' => 'BE', 'HB-' => 'CH', 'OE-' => 'AT',
-        'OK-' => 'CZ', 'OM-' => 'SK', 'SP-' => 'PL', 'HA-' => 'HU', 'YR-' => 'RO',
-        'LZ-' => 'BG', '9A-' => 'HR', 'S5-' => 'SI', 'YU-' => 'RS', 'Z3-' => 'MK',
-        'T7-' => 'SM', '3A-' => 'MC', '9H-' => 'MT', '5B-' => 'CY', 'TC-' => 'TR',
-        '4X-' => 'IL', 'SU-' => 'EG', '5A-' => 'LY', 'CN-' => 'MA', '7T-' => 'DZ',
-        'TS-' => 'TN', 'JY-' => 'JO', 'OD-' => 'LB', 'YK-' => 'SY', 'EP-' => 'IR',
-        'A6-' => 'AE', 'A7-' => 'QA', '9K-' => 'KW', 'VT-' => 'IN', 'AP-' => 'PK',
-        'B-' => 'CN', 'JA-' => 'JP', 'HL-' => 'KR', 'HS-' => 'TH', 'VN-' => 'VN',
-        '9V-' => 'SG', 'PK-' => 'ID', '9M-' => 'MY', 'RP-' => 'PH', 'ZK-' => 'NZ',
-        'VH-' => 'AU', 'C-' => 'CA', 'N' => 'US', 'XA-' => 'MX', 'XB-' => 'MX',
-        'XC-' => 'MX', 'PT-' => 'BR', 'LV-' => 'AR', 'CC-' => 'CL', 'HK-' => 'CO',
-        'OB-' => 'PE', 'YV-' => 'VE', 'TI-' => 'CR', 'TG-' => 'GT', 'HR-' => 'HN',
-        'YS-' => 'SV', 'YN-' => 'NI', 'HP-' => 'PA', 'CU-' => 'CU', 'HI-' => 'DO',
-        'V2-' => 'AG', '8P-' => 'BB', 'J3-' => 'GD', '9Y-' => 'TT', 'PJ-' => 'SX'
-    ];
-    if (empty($reg)) return null;
-    $reg = strtoupper(trim($reg));
-    foreach ($map as $prefix => $country) {
-        if (strpos($reg, $prefix) === 0) return $country;
-    }
-    return null;
-}
-
-function getCountryFromCallsign($callsign) {
-    $map = [
-        'IAM' => 'IT', 'RCH' => 'US', 'CNV' => 'US', 'CTM' => 'FR',
-        'PLF' => 'PL', 'GAF' => 'DE', 'BAF' => 'BE', 'RNLAF' => 'NL', 'HUAF' => 'HU',
-        'ROF' => 'RO', 'SVK' => 'SK', 'CZE' => 'CZ', 'ASH' => 'US', 'RFR' => 'US',
-        'RRS' => 'GB', 'RRR' => 'GB', 'SNAKE' => 'US', 'VIPER' => 'US', 'LION' => 'FR'
-    ];
-    if (empty($callsign)) return null;
-    $callsign = strtoupper(trim($callsign));
-    foreach ($map as $prefix => $country) {
-        if (strpos($callsign, $prefix) === 0) return $country;
-    }
-    return null;
-}
-
-function getCountryCode($hex, $reg, $callsign, $customRules = []) {
-    foreach ($customRules as $rule) {
-        $fieldValue = null;
-        if ($rule['field'] === 'hex') $fieldValue = strtoupper(trim($hex));
-        elseif ($rule['field'] === 'reg') $fieldValue = strtoupper(trim($reg ?? ''));
-        elseif ($rule['field'] === 'callsign') $fieldValue = strtoupper(trim($callsign ?? ''));
-
-        if ($fieldValue !== null && patternMatch($fieldValue, $rule['pattern'])) {
-            return strtoupper($rule['country_code']);
-        }
-    }
-
-    $country = getCountryFromReg($reg);
-    if ($country !== null) return $country;
-
-    $country = getCountryFromCallsign($callsign);
-    if ($country !== null) return $country;
-
-    return 'ZZ';
-}
-
-/**
- * Costruisce l'emoji bandiera per un codice ISO 3166-1 alpha-2 componendo i due
- * "Regional Indicator Symbol" Unicode corrispondenti. Copre automaticamente
- * qualunque codice a due lettere (incluso 'UN') senza mappa statica.
- */
-function isoToFlagEmoji($code) {
-    $code = strtoupper(trim($code));
-    if (!preg_match('/^[A-Z]{2}$/', $code)) {
-        return '';
-    }
-    $offset = 0x1F1E6 - 65;
-    return mb_chr(ord($code[0]) + $offset, 'UTF-8') . mb_chr(ord($code[1]) + $offset, 'UTF-8');
-}
-
-function countryToEmoji($code) {
-    $code = strtoupper(trim($code));
-    $special = [
-        'NATO' => '🧭',
-        'ZZ'   => '🏳️',
-    ];
-    if (isset($special[$code])) {
-        return $special[$code];
-    }
-    return isoToFlagEmoji($code);
-}
-
 // Regole personalizzate per la nazionalità (stesse usate in index.php)
 $customRules = [];
 $resRules = $db->query("SELECT field, pattern, country_code FROM country_rules");

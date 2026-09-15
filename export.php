@@ -102,13 +102,7 @@ try {
         <td><?= htmlspecialchars($row['hex']) ?></td>
         <td><?= htmlspecialchars($row['callsign']) ?></td>
         <td><?= htmlspecialchars($row['reg']) ?></td>
-        <td>
-            <?php if (!empty($row['model_t'])): ?>
-                <?= htmlspecialchars($row['model_t']) ?>
-            <?php else: ?>
-                <?= htmlspecialchars($row['model_t']) ?>
-            <?php endif; ?>
-        </td>
+        <td><?= htmlspecialchars($row['model_t']) ?></td>
         <td><?= htmlspecialchars($row['ident_first_seen']) ?></td>
         <td><?= htmlspecialchars($row['ident_last_seen']) ?></td>
         <td><?= htmlspecialchars($row['hex_first_seen']) ?></td>
@@ -127,5 +121,6 @@ try {
     <?php
 } catch (Exception $e) {
     http_response_code(500);
-    echo "Errore: " . htmlspecialchars($e->getMessage());
+    error_log('export.php: ' . $e->getMessage());
+    echo "Errore durante l'esportazione. Riprova tra qualche minuto.";
 }
