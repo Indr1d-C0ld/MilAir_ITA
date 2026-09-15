@@ -210,6 +210,10 @@ function auth_bootstrap(): void {
         ini_set('session.gc_probability', '1');
         ini_set('session.gc_divisor', '100');
         ini_set('session.gc_maxlifetime', '43200'); // 12 ore di inattività
+        // Nome di sessione dedicato: con il PHPSESSID di default e path '/', le
+        // app che convivono su questo host condividono un unico cookie. Poiché
+        // ognuna rigenera l'id al login, accedere a una disconnetteva le altre.
+        session_name('MILAIRSESSID');
         session_set_cookie_params([
             'lifetime' => 0,
             'path' => '/',
