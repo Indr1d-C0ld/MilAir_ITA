@@ -33,8 +33,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $error = 'Username troppo corto (minimo 3 caratteri).';
     } elseif (!preg_match('/^[A-Za-z0-9_.\-]+$/', $username)) {
         $error = 'Username: usa solo lettere, numeri, punto, trattino, underscore.';
-    } elseif (strlen($password) < 10) {
-        $error = 'La password deve essere di almeno 10 caratteri.';
+    } elseif (strlen($password) < PASSWORD_MIN_LENGTH) {
+        $error = 'La password deve essere di almeno ' . PASSWORD_MIN_LENGTH . ' caratteri.';
     } elseif ($password !== $passwordConfirm) {
         $error = 'Le due password non coincidono.';
     } else {
@@ -98,8 +98,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 <label>Nome visualizzato (opzionale)
                     <input type="text" name="display_name" value="<?= htmlspecialchars($_POST['display_name'] ?? '') ?>">
                 </label>
-                <label>Password (minimo 10 caratteri)
-                    <input type="password" name="password" required minlength="10">
+                <label>Password (minimo <?= PASSWORD_MIN_LENGTH ?> caratteri)
+                    <input type="password" name="password" required minlength="<?= PASSWORD_MIN_LENGTH ?>">
                 </label>
                 <label>Conferma password
                     <input type="password" name="password_confirm" required minlength="10">

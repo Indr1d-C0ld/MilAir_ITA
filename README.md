@@ -191,7 +191,7 @@ Tre livelli di accesso, gestiti in [`auth.php`](auth.php):
 - **admin** — come collaboratore + pannello utenti, log accessi, gestione feed RSS, richieste di accesso
 
 Misure di sicurezza implementate:
-- Password con hash tramite `password_hash()`/`password_verify()` di PHP (bcrypt), minimo 10 caratteri
+- Password con hash tramite `password_hash()`/`password_verify()` di PHP (bcrypt); lunghezza minima definita da `PASSWORD_MIN_LENGTH` in [`auth.php`](auth.php) e applicata sia lato server sia nei form — alzarla è consigliabile se il portale è esposto su internet
 - Protezione CSRF su tutte le form (`require_csrf()`/`csrf_field()`)
 - Risposta generica e a tempo costante su login falliti (utente inesistente, password errata o account disattivo producono lo stesso esito, per non facilitare l'enumerazione utenti)
 - Limite sui tentativi di login per utente **e** per indirizzo IP

@@ -25,8 +25,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         } elseif (!in_array($role, ['collaboratore', 'admin'], true)) {
             $flashMsg = 'Ruolo non valido.';
             $flashType = 'error';
-        } elseif (strlen($password) < 10) {
-            $flashMsg = 'La password deve avere almeno 10 caratteri.';
+        } elseif (strlen($password) < PASSWORD_MIN_LENGTH) {
+            $flashMsg = 'La password deve avere almeno ' . PASSWORD_MIN_LENGTH . ' caratteri.';
             $flashType = 'error';
         } elseif ($password !== $passwordConfirm) {
             $flashMsg = 'Le due password non coincidono.';
@@ -86,8 +86,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 $stmt->execute();
 
                 if ($newPassword !== '') {
-                    if (strlen($newPassword) < 10) {
-                        $flashMsg = 'Dati aggiornati. La nuova password NON è stata impostata (minimo 10 caratteri).';
+                    if (strlen($newPassword) < PASSWORD_MIN_LENGTH) {
+                        $flashMsg = 'Dati aggiornati. La nuova password NON è stata impostata (minimo ' . PASSWORD_MIN_LENGTH . ' caratteri).';
                         $flashType = 'error';
                     } else {
                         $stmt = $db->prepare("UPDATE users SET password_hash = ? WHERE id = ?");
@@ -113,8 +113,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         if (!$row || !verify_password($current, $row['password_hash'])) {
             $flashMsg = 'Password attuale non corretta.';
             $flashType = 'error';
-        } elseif (strlen($new) < 10) {
-            $flashMsg = 'La nuova password deve avere almeno 10 caratteri.';
+        } elseif (strlen($new) < PASSWORD_MIN_LENGTH) {
+            $flashMsg = 'La nuova password deve avere almeno ' . PASSWORD_MIN_LENGTH . ' caratteri.';
             $flashType = 'error';
         } elseif ($new !== $newConfirm) {
             $flashMsg = 'Le due nuove password non coincidono.';
@@ -179,8 +179,8 @@ while ($row = $res->fetchArray(SQLITE3_ASSOC)) {
                 <option value="admin">Admin</option>
             </select>
         </label>
-        <label>Password (min. 10 caratteri): <input type="password" name="password" required minlength="10"></label>
-        <label>Conferma password: <input type="password" name="password_confirm" required minlength="10"></label>
+        <label>Password (min. <?= PASSWORD_MIN_LENGTH ?> caratteri): <input type="password" name="password" required minlength="<?= PASSWORD_MIN_LENGTH ?>"></label>
+        <label>Conferma password: <input type="password" name="password_confirm" required minlength="<?= PASSWORD_MIN_LENGTH ?>"></label>
         <button type="submit">Crea account</button>
     </form>
 

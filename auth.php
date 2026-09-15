@@ -16,6 +16,14 @@ define('AUTH_DB_PATH', __DIR__ . '/auth.db');
 
 const ROLE_RANK = ['pubblico' => 0, 'collaboratore' => 1, 'admin' => 2];
 
+// Lunghezza minima delle password, applicata in setup.php e admin_users.php
+// (validazione lato server e attributo minlength nei form).
+// Portata da 10 a 9 su richiesta esplicita dell'amministratore del deployment.
+// Alzarla è sempre consigliabile: il login è già protetto da un limite di
+// tentativi per utente e per IP, quindi il rischio non è l'attacco online ma
+// un eventuale attacco offline se auth.db finisse in mani altrui.
+const PASSWORD_MIN_LENGTH = 9;
+
 // Conservazione dei dati di servizio (vedi prune_old_logs()). Valori generosi:
 // sono log di audit, la potatura serve solo a evitare crescita illimitata.
 // Gli alert non letti sono esclusi dalla potatura a prescindere dall'età.
