@@ -4,6 +4,11 @@ geo_secrets.php
 map_secrets.php
 ai_secrets.php
 
+# === Configurazione Apache specifica del deployment ===
+# Il .htaccess reale puo' contenere eccezioni legate all'host (es. l'origine
+# autorizzata a incorporare l'app in un iframe): si parte da .htaccess.example.
+.htaccess
+
 # === Database (dati operativi/personali, ricreati automaticamente al primo avvio) ===
 *.db
 *.db-shm

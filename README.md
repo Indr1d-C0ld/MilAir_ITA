@@ -113,7 +113,7 @@ Le seguenti cartelle **non sono nel repository** (create automaticamente, vedi `
 
 - **PHP** ≥ 8.0 con estensione `sqlite3`
 - **Python** 3.8+ con il pacchetto `requests` (`pip install requests`)
-- **Apache** con `mod_rewrite` (usato da [`.htaccess`](.htaccess) per bloccare l'accesso diretto a segreti, database e cache) — su Nginx vanno tradotte le regole equivalenti
+- **Apache** con `mod_rewrite` e `mod_headers` (usati dal `.htaccess`, da creare copiando [`.htaccess.example`](.htaccess.example), per header di sicurezza e per bloccare l'accesso diretto a segreti, database e cache) — su Nginx vanno tradotte le regole equivalenti
 - **cron** e/o **systemd**, per l'esecuzione periodica degli script
 - **SQLite3** (CLI, opzionale, utile per ispezionare i database)
 
@@ -125,21 +125,26 @@ Le seguenti cartelle **non sono nel repository** (create automaticamente, vedi `
    cd /var/www/html/milair_ita
    ```
 
-2. **Configura le chiavi API opzionali** (vedi [sezione dedicata](#configurazione-chiavi-api-opzionali)) — puoi anche saltare questo passo: l'app funziona comunque, con i soli layer opzionali disattivati.
+2. **Crea il `.htaccess`** dal modello fornito. Non è versionato perché in genere va adattato al proprio deployment (per esempio per consentire l'embedding in un iframe da un'altra origine):
+   ```bash
+   cp .htaccess.example .htaccess
+   ```
+
+3. **Configura le chiavi API opzionali** (vedi [sezione dedicata](#configurazione-chiavi-api-opzionali)) — puoi anche saltare questo passo: l'app funziona comunque, con i soli layer opzionali disattivati.
    ```bash
    cp geo_secrets.php.example geo_secrets.php
    cp map_secrets.php.example map_secrets.php
    ```
 
-3. **Permessi**: adatta `USER` in [`fix_permissions.sh`](fix_permissions.sh) al tuo utente di sistema, poi eseguilo (richiede sudo):
+4. **Permessi**: adatta `USER` in [`fix_permissions.sh`](fix_permissions.sh) al tuo utente di sistema, poi eseguilo (richiede sudo):
    ```bash
    sudo ./fix_permissions.sh
    ```
    In sintesi: Apache (`www-data`) deve poter scrivere su `events.db`, `auth.db`, `mil.csv`, `cache/`, `photos/`, `fdbphotos/`, `sessions/` (quest'ultima con permessi ristretti, `770`/`660`).
 
-4. **Primo avvio**: apri `https://<tuo-dominio>/setup.php` nel browser per creare il primo account amministratore. La pagina si autodisabilita in modo permanente subito dopo la creazione del primo utente (stesso pattern di WordPress/Nextcloud) e reindirizza a `login.php`.
+5. **Primo avvio**: apri `https://<tuo-dominio>/setup.php` nel browser per creare il primo account amministratore. La pagina si autodisabilita in modo permanente subito dopo la creazione del primo utente (stesso pattern di WordPress/Nextcloud) e reindirizza a `login.php`.
 
-5. **Avvia la raccolta dati**: installa il servizio systemd e le voci di cron (vedi sotto).
+6. **Avvia la raccolta dati**: installa il servizio systemd e le voci di cron (vedi sotto).
 
 ## Configurazione chiavi API opzionali
 

@@ -1,4 +1,12 @@
 # ---------------------------------------------------------------------------
+# Esempio di .htaccess per MilAir ITA — copiare in ".htaccess" nella web root.
+#
+# Questo file è il modello pubblico: contiene la configurazione consigliata,
+# senza riferimenti a uno specifico deployment. Il .htaccess realmente in uso
+# non è versionato qui (vedi la sezione "Installazione" del README).
+# ---------------------------------------------------------------------------
+
+# ---------------------------------------------------------------------------
 # Header di sicurezza
 # ---------------------------------------------------------------------------
 <IfModule mod_headers.c>
@@ -26,6 +34,13 @@
     # una default-src restrittiva richiederebbe 'unsafe-inline' — che ne
     # annullerebbe il beneficio principale. Una CSP piena avrebbe senso solo
     # dopo aver spostato gli inline in file separati: lavoro ampio, non fatto qui.
+    #
+    # Se l'applicazione va incorporata in un iframe da un'altra origine (per
+    # esempio una dashboard servita su un'altra porta dello stesso host),
+    # aggiungere quell'origine qui e rimuovere X-Frame-Options sopra
+    # (sostituendolo con "Header always unset X-Frame-Options"): quell'header
+    # accetta una sola origine e SAMEORIGIN confronta anche la porta, quindi
+    # non sa esprimere l'eccezione e bloccherebbe comunque il frame.
     Header always set Content-Security-Policy "frame-ancestors 'self'"
 </IfModule>
 

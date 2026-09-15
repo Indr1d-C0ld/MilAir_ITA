@@ -971,7 +971,9 @@ try {
                 <td>
                     <a href="https://www.flightdb.net/aircraft.php?modes=<?= urlencode($row['hex']) ?>" target="_blank" title="Apri scheda FlightDB"><?= htmlspecialchars($row['hex']) ?></a>
                     <?php if (!empty($row['hex'])): ?>
-                        <a href="https://timrouter.dns.army/flight_anom/?event_type=&hex=<?= urlencode($row['hex']) ?>&callsign=&date_from=&date_to=&sort=date&dir=DESC&page=1" target="_blank" title="Cerca anomalie per HEX" class="anom-link">🔍</a>
+                        <?php /* URL root-relative: Flight Anomaly Monitor e' servito dallo
+                                 stesso vhost, cosi' il codice non e' legato a un hostname. */ ?>
+                        <a href="/flight_anom/?event_type=&hex=<?= urlencode($row['hex']) ?>&callsign=&date_from=&date_to=&sort=date&dir=DESC&page=1" target="_blank" title="Cerca anomalie per HEX" class="anom-link">🔍</a>
                     <?php endif; ?>
                     <a href="#" onclick="copyToClipboard('<?= htmlspecialchars($row['hex'], ENT_QUOTES) ?>'); return false;" title="Copia HEX" class="copy-btn">📋</a>
                     <?php if ($row['is_new_today']): ?>
