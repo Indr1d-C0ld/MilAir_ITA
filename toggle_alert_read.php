@@ -1,7 +1,7 @@
 <?php
 require_once __DIR__ . '/auth.php';
 auth_bootstrap();
-require_role('collaboratore');
+require_role_json('collaboratore');
 
 $isAjax = isset($_POST['ajax']) || isset($_GET['ajax']);
 

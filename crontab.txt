@@ -16,8 +16,9 @@
 # Ogni 6 ore scarica le foto mancanti dei veicoli reali da FlightDB, per MilAir ITA: 
 0 */6 * * * /usr/bin/php /var/www/html/milair_ita/download_fdb_photos.php >> /var/www/html/milair_ita/fdbphotos.log 2>&1
 
-# Aggiorna informazioni NOTAMS per mappa MilAir ITA:
-0 */3 * * * /usr/bin/php /var/www/html/milair_ita/fetch_notams.php >> /var/www/html/milair_ita/notams.log 2>&1
+# Aggiorna informazioni NOTAMS per mappa MilAir ITA (al minuto 7, non alle :00 in cui
+# girano già csv_to_db.py e update_rarity.php, per non contendersi il lock di events.db):
+7 */3 * * * /usr/bin/php /var/www/html/milair_ita/fetch_notams.php >> /var/www/html/milair_ita/notams.log 2>&1
 
 # Ogni 5 minuti scansiona i nuovi eventi per generare alert (watchlist, squawk di emergenza, contatti rari):
 */5 * * * * /usr/bin/php /var/www/html/milair_ita/alert_scan.php >> /var/www/html/milair_ita/alerts.log 2>&1

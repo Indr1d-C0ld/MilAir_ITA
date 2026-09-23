@@ -153,7 +153,7 @@ $typeLabels = ['contact' => 'Contatto', 'collab_access' => 'Accesso collaborator
                     <?php endif; ?>
                 </div>
             </div>
-            <div class="req-message"><?= nl2br(htmlspecialchars($r['message'])) ?></div>
+            <div class="req-message"><?= htmlspecialchars($r['message']) /* pre-wrap: con nl2br() gli a capo raddoppiavano */ ?></div>
             <?php if ($r['admin_note']): ?>
                 <div><strong>Nota interna:</strong> <?= nl2br(htmlspecialchars($r['admin_note'])) ?></div>
             <?php endif; ?>

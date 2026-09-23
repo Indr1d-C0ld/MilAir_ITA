@@ -116,8 +116,14 @@ function parse_feed_date(?string $raw): ?string {
 }
 
 function clean_html_to_text(string $html): string {
+    // I tag di blocco diventano a capo prima di strip_tags(): altrimenti i
+    // paragrafi si incollavano ("...fine frase.Inizio frase") e le parole ai
+    // lati di un <br> si fondevano in una sola, falsando anche le keyword.
+    $html = preg_replace('~<br\s*/?>|</(p|div|li|h[1-6]|blockquote|tr)>~i', "\n", $html);
     $text = html_entity_decode(strip_tags($html), ENT_QUOTES | ENT_HTML5, 'UTF-8');
+    $text = str_replace(["\r\n", "\r", "\u{00A0}"], ["\n", "\n", ' '], $text);
     $text = preg_replace('/[ \t]+/', ' ', $text);
+    $text = preg_replace('/ *\n */', "\n", $text);
     $text = preg_replace('/\n{3,}/', "\n\n", $text);
     return trim($text);
 }
@@ -152,6 +158,16 @@ function parse_atom_entry(SimpleXMLElement $entry): array {
         }
     }
     $bodyRaw = (string)($entry->content ?: $entry->summary ?: '');
+    // type="xhtml": il contenuto è un <div> figlio, non testo; (string) ne
+    // restituiva solo gli spazi e l'articolo risultava vuoto.
+    foreach ([$entry->content, $entry->summary] as $node) {
+        if (trim($bodyRaw) === '' && $node !== null && $node->count() > 0) {
+            $bodyRaw = '';
+            foreach ($node->children() as $child) {
+                $bodyRaw .= $child->asXML();
+            }
+        }
+    }
     $author = isset($entry->author->name) ? (string)$entry->author->name : '';
     return [
         'guid' => trim((string)($entry->id ?: $link)),
@@ -159,14 +175,36 @@ function parse_atom_entry(SimpleXMLElement $entry): array {
         'title' => trim((string)$entry->title),
         'raw_body' => $bodyRaw,
         'author' => trim($author),
-        'published_at' => parse_feed_date((string)($entry->updated ?: $entry->published ?: '')),
+        // Data di pubblicazione, non di ultima modifica: con updated un articolo
+        // vecchio corretto ieri risaliva in cima come nuovo.
+        'published_at' => parse_feed_date((string)($entry->published ?: $entry->updated ?: '')),
     ];
 }
 
 /** Normalizza un XML di feed (RSS 2.0 o Atom) in un array di item grezzi. */
 function normalize_feed_items(SimpleXMLElement $xml): array {
     $items = [];
-    if (isset($xml->channel)) {
+    // RSS 1.0 per primo: ha anch'esso un <channel>, ma gli item non vi sono dentro.
+    if ($xml->getName() === 'RDF') {
+        // RSS 1.0 (RDF): gli <item> sono figli della radice, nel namespace RSS 1.0,
+        // e la data sta in dc:date. Prima questi feed risultavano sempre vuoti.
+        foreach ($xml->children('http://purl.org/rss/1.0/')->item as $item) {
+            $parsed = parse_rss_item($item->children('http://purl.org/rss/1.0/'));
+            $dc = $item->children('http://purl.org/dc/elements/1.1/');
+            $content = $item->children('http://purl.org/rss/1.0/modules/content/');
+            if ($parsed['raw_body'] === '' && isset($content->encoded)) {
+                $parsed['raw_body'] = (string)$content->encoded;
+            }
+            if ($parsed['author'] === '') {
+                $parsed['author'] = trim((string)$dc->creator);
+            }
+            $parsed['published_at'] = $parsed['published_at'] ?? parse_feed_date((string)$dc->date);
+            if ($parsed['guid'] === '') {
+                $parsed['guid'] = (string)$item->attributes('http://www.w3.org/1999/02/22-rdf-syntax-ns#')['about'];
+            }
+            $items[] = $parsed;
+        }
+    } elseif (isset($xml->channel)) {
         foreach ($xml->channel->item as $item) {
             $items[] = parse_rss_item($item);
         }
@@ -192,6 +230,8 @@ const NEWS_STOPWORDS = [
     'quello', 'quella', 'quelli', 'quelle', 'suo', 'sua', 'suoi', 'sue', 'loro', 'mio', 'mia', 'miei', 'mie',
     'tuo', 'tua', 'tuoi', 'tue', 'nostro', 'nostra', 'essere', 'sono', 'era', 'stato', 'stata', 'hanno', 'ha',
     'avere', 'aveva', 'fare', 'fatto', 'leggi', 'tutto', 'articolo', 'fonte', 'foto', 'video',
+    // Forme elise che restano dopo aver separato l'apostrofo (dell', nell', ...)
+    'dell', 'nell', 'sull', 'dall', 'all', 'quell', 'quest', 'tutt', 'dev', 'anch',
     // Inglese: articles, prepositions, conjunctions, pronouns, common verb/aux forms, boilerplate
     'the', 'a', 'an', 'of', 'in', 'on', 'at', 'to', 'for', 'with', 'by', 'from', 'as', 'is', 'are', 'was', 'were',
     'be', 'been', 'being', 'and', 'or', 'but', 'not', 'this', 'that', 'these', 'those', 'it', 'its', 'his', 'her',
@@ -209,7 +249,10 @@ const NEWS_STOPWORDS = [
  */
 function extract_keywords(string $text, int $topN = 10, int $minLen = 4): array {
     $lower = mb_strtolower($text, 'UTF-8');
-    $tokens = preg_split('/[^\p{L}\']+/u', $lower, -1, PREG_SPLIT_NO_EMPTY);
+    // L'apostrofo separa (dell'aeronautica -> dell + aeronautica), sia quello
+    // ASCII sia quello tipografico ’: prima il primo restava attaccato alla parola
+    // ("dell'aeronautica" come keyword) e il secondo no, con risultati incoerenti.
+    $tokens = preg_split('/[^\p{L}]+/u', $lower, -1, PREG_SPLIT_NO_EMPTY);
     $stop = array_flip(NEWS_STOPWORDS);
     $counts = [];
     foreach ($tokens as $t) {

@@ -13,18 +13,16 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     require_csrf();
     $result = attempt_login($_POST['username'] ?? '', $_POST['password'] ?? '');
     if ($result['ok']) {
-        $next = $_POST['next'] ?? 'index.php';
-        // Evita open-redirect: accetta solo un percorso locale relativo (nessun host esterno)
-        if (!preg_match('#^[A-Za-z0-9_\-]+\.php(\?[^\s]*)?$#', $next)) {
-            $next = 'index.php';
-        }
-        header('Location: ' . $next);
+        // Evita open-redirect: solo pagine locali. safe_local_url() accetta anche il
+        // percorso assoluto che require_role() passa ("/milair_ita/map.php?..."):
+        // prima la regex locale lo rifiutava e si finiva sempre su index.php.
+        header('Location: ' . safe_local_url($_POST['next'] ?? ''));
         exit;
     }
     $error = $result['error'];
 }
 
-$next = $_GET['next'] ?? $_POST['next'] ?? 'index.php';
+$next = safe_local_url($_GET['next'] ?? $_POST['next'] ?? '');
 ?>
 <!DOCTYPE html>
 <html lang="it">

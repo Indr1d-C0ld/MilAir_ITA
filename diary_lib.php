@@ -80,11 +80,7 @@ function diary_build_digest(SQLite3 $db, string $day): array {
     [$a, $b] = diary_day_bounds_utc($day);
 
     // Regole personalizzate di nazionalità (stessa fonte di index.php/stats.php)
-    $customRules = [];
-    $resRules = $db->query("SELECT field, pattern, country_code FROM country_rules");
-    while ($rule = $resRules->fetchArray(SQLITE3_ASSOC)) {
-        $customRules[] = $rule;
-    }
+    $customRules = loadCountryRules($db); // geo_lib.php: unica fonte, ordine = precedenza
 
     $stmt = $db->prepare("SELECT hex, callsign, reg, model_t, squawk, first_seen_utc
                            FROM events WHERE first_seen_utc >= ? AND first_seen_utc < ?
@@ -99,7 +95,9 @@ function diary_build_digest(SQLite3 $db, string $day): array {
     $byCountry = [];
     $byModel = [];
     $hexCounts = [];   // hex => n. avvistamenti nel giorno
-    $hexInfo = [];     // hex => ultima callsign/reg/model_t/operator/country viste
+    $hexInfo = [];     // hex => ultima callsign/reg/model_t/operator/country NON vuote viste
+    $dayCallsigns = []; // callsign => n. avvistamenti nel giorno (tutti, non solo l'ultimo per hex)
+    $rome = new DateTimeZone('Europe/Rome');
     $emergencies = [];
     $squawkLabels = [
         '7500' => 'Interferenza illecita (dirottamento)',
@@ -109,9 +107,12 @@ function diary_build_digest(SQLite3 $db, string $day): array {
 
     while ($row = $res->fetchArray(SQLITE3_ASSOC)) {
         $total++;
-        $hour = (int) substr($row['first_seen_utc'], 11, 2);
-        if ($hour >= 0 && $hour <= 23) {
-            $byHour[$hour]++;
+        // Ora italiana, come il giorno del diario (prima l'ora UTC: le 00-01 italiane
+        // finivano sotto le 22-23 e l'istogramma era sfasato di 1-2 ore).
+        $ts = strtotime($row['first_seen_utc']);
+        $localTime = $ts !== false ? (new DateTime('@' . $ts))->setTimezone($rome) : null;
+        if ($localTime) {
+            $byHour[(int) $localTime->format('G')]++;
         }
 
         $op = operatorFromCallsign($row['callsign']);
@@ -127,14 +128,26 @@ function diary_build_digest(SQLite3 $db, string $day): array {
 
         $hex = $row['hex'];
         $hexCounts[$hex] = ($hexCounts[$hex] ?? 0) + 1;
+        // Un campo vuoto nell'ultimo avvistamento non cancella quanto visto prima
+        // (prima bastava un ultimo evento senza callsign per perdere il nominativo).
+        $prev = $hexInfo[$hex] ?? [];
         $hexInfo[$hex] = [
-            'hex' => $hex, 'callsign' => $row['callsign'], 'reg' => $row['reg'],
-            'model_t' => $row['model_t'], 'operator' => $op, 'country' => $cc,
+            'hex' => $hex,
+            'callsign' => !empty($row['callsign']) ? $row['callsign'] : ($prev['callsign'] ?? $row['callsign']),
+            'reg' => !empty($row['reg']) ? $row['reg'] : ($prev['reg'] ?? $row['reg']),
+            'model_t' => !empty($row['model_t']) ? $row['model_t'] : ($prev['model_t'] ?? $row['model_t']),
+            'operator' => $op ?? ($prev['operator'] ?? null),
+            'country' => ($cc !== 'ZZ' || empty($prev['country'])) ? $cc : $prev['country'],
         ];
+        if (!empty($row['callsign'])) {
+            $dayCallsigns[$row['callsign']] = ($dayCallsigns[$row['callsign']] ?? 0) + 1;
+        }
 
         if (in_array($row['squawk'], ['7500', '7600', '7700'], true)) {
             $emergencies[] = [
-                'first_seen_utc' => $row['first_seen_utc'], 'hex' => $hex,
+                'first_seen_utc' => $row['first_seen_utc'],
+                'ora_it' => $localTime ? $localTime->format('H:i') : '',
+                'hex' => $hex,
                 'callsign' => $row['callsign'], 'squawk' => $row['squawk'],
                 'label' => $squawkLabels[$row['squawk']] ?? '',
             ];
@@ -177,7 +190,9 @@ function diary_build_digest(SQLite3 $db, string $day): array {
     }
 
     // Baseline dei 14 giorni precedenti: operatori/nazioni "nuovi", callsign ricorrenti.
-    $pa = (new DateTime(rtrim($a, ' UTC'), new DateTimeZone('UTC')))->modify('-14 days')->format('Y-m-d H:i:s') . ' UTC';
+    // 14 giorni di calendario italiano (non 14x24 ore da mezzanotte UTC: a cavallo
+    // del cambio d'ora la finestra partiva un'ora prima o dopo la mezzanotte).
+    [$pa] = diary_day_bounds_utc((new DateTime($day, $rome))->modify('-14 days')->format('Y-m-d'));
     $prevStmt = $db->prepare("SELECT callsign, reg, hex, first_seen_utc FROM events
                                WHERE first_seen_utc >= ? AND first_seen_utc < ?");
     $prevStmt->bindValue(1, $pa, SQLITE3_TEXT);
@@ -191,8 +206,9 @@ function diary_build_digest(SQLite3 $db, string $day): array {
         if ($op !== null) $prevOperators[$op] = true;
         $cc = getCountryCode($row['hex'], $row['reg'], $row['callsign'], $customRules);
         if ($cc !== 'ZZ') $prevCountries[$cc] = true;
-        if (!empty($row['callsign'])) {
-            $callsignDays[$row['callsign']][substr($row['first_seen_utc'], 0, 10)] = true;
+        if (!empty($row['callsign']) && ($pts = strtotime($row['first_seen_utc'])) !== false) {
+            // Giorno italiano, non la data UTC della stringa.
+            $callsignDays[$row['callsign']][(new DateTime('@' . $pts))->setTimezone($rome)->format('Y-m-d')] = true;
         }
     }
 
@@ -201,14 +217,15 @@ function diary_build_digest(SQLite3 $db, string $day): array {
     $newCountries = array_values(array_diff(array_keys(array_filter($byCountry, fn($v, $k) => $k !== 'ZZ', ARRAY_FILTER_USE_BOTH)), array_keys($prevCountries)));
     sort($newCountries);
 
+    // Tutti i callsign visti oggi, non solo l'ultimo di ciascun hex: un mezzo che
+    // cambia nominativo in giornata li ha tutti; n = avvistamenti di quel callsign.
     $recurringCallsigns = [];
-    foreach (array_keys($hexInfo) as $hex) {
-        $cs = $hexInfo[$hex]['callsign'];
-        if (empty($cs)) continue;
+    foreach ($dayCallsigns as $cs => $n) {
+        $cs = (string) $cs; // chiavi numeriche ("1234") diventano int in PHP
         $days = $callsignDays[$cs] ?? [];
         $days[$day] = true; // include oggi stesso nel conteggio
         if (count($days) >= 3) {
-            $recurringCallsigns[$cs] = ['callsign' => $cs, 'days' => count($days), 'n' => $hexCounts[$hex]];
+            $recurringCallsigns[$cs] = ['callsign' => $cs, 'days' => count($days), 'n' => $n];
         }
     }
     usort($recurringCallsigns, fn($x, $y) => [$y['days'], $y['n']] <=> [$x['days'], $x['n']]);
@@ -234,6 +251,7 @@ function diary_build_digest(SQLite3 $db, string $day): array {
             'emergencies' => count($emergencies),
         ],
         'by_hour'             => $byHour,
+        'hours_tz'            => 'Europe/Rome', // i digest salvati prima di questo campo hanno ore UTC
         'by_operator'         => $toRows($byOperator, 'operator'),
         'by_country'          => $toRows($byCountry, 'country'),
         'by_model'            => $toRows($byModel, 'model_t'),
@@ -342,5 +360,8 @@ function diary_md_to_html(string $s): string {
         $hex = strtoupper($m[1]);
         return '<a href="index.php?hex=' . $hex . '"><code>' . $hex . '</code></a>';
     }, $out);
+    // Altro testo tra backtick (callsign, registrazioni): solo stile codice, prima
+    // restavano i backtick letterali nella pagina.
+    $out = preg_replace('/`([^`<>\n]+)`/', '<code>$1</code>', $out);
     return $out;
 }

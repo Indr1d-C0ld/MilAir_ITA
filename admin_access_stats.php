@@ -74,7 +74,7 @@ $failedLogins24h = (int)$db->querySingle("SELECT COUNT(*) FROM login_attempts WH
         <div class="stat-card"><div class="stat-value"><?= number_format($totalRequests) ?></div><div class="stat-label">Richieste totali</div></div>
         <div class="stat-card"><div class="stat-value"><?= number_format($totalUniqueIps) ?></div><div class="stat-label">IP unici</div></div>
         <div class="stat-card"><div class="stat-value"><?= number_format($totalUsers) ?></div><div class="stat-label">Account attivi</div></div>
-        <div class="stat-card"><div class="stat-value"><?= number_format($totalLogins) ?></div><div class="stat-label">Login riusciti (totale)</div></div>
+        <div class="stat-card"><div class="stat-value"><?= number_format($totalLogins) ?></div><div class="stat-label">Login riusciti (ultimi <?= LOGIN_ATTEMPTS_RETENTION_DAYS ?> giorni)</div></div>
         <div class="stat-card <?= $failedLogins24h > 20 ? 'warn' : '' ?>"><div class="stat-value"><?= number_format($failedLogins24h) ?></div><div class="stat-label">Login falliti (24h)</div></div>
     </div>
 

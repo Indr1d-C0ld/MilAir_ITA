@@ -11,7 +11,7 @@ $emojiList = ['🔴','🟠','🟡','🟢','🔵','🟣','⚫','⚪','⭐','💡'
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['emoji'])) {
     require_csrf();
     $hex = $_POST['hex'] ?? '';
-    $returnUrl = $_POST['return'] ?? 'index.php';
+    $returnUrl = safe_local_url($_POST['return'] ?? '');
     $emoji = $_POST['emoji'];
 
     if (!$hex) {
@@ -77,7 +77,7 @@ if ($isAjax) {
 }
 
 $hex = $_GET['hex'] ?? '';
-$returnUrl = $_GET['return'] ?? 'index.php';
+$returnUrl = safe_local_url($_GET['return'] ?? '');
 if (!$hex) {
     header('Location: index.php');
     exit;

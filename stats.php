@@ -35,11 +35,7 @@ try {
     $numNotes = $db->querySingle("SELECT COUNT(*) FROM notes WHERE note IS NOT NULL AND note != ''");
 
     // Regole personalizzate di nazionalità (stessa fonte di index.php/map.php/rules.php)
-    $customRules = [];
-    $resRules = $db->query("SELECT field, pattern, country_code FROM country_rules");
-    while ($rule = $resRules->fetchArray(SQLITE3_ASSOC)) {
-        $customRules[] = $rule;
-    }
+    $customRules = loadCountryRules($db); // geo_lib.php: unica fonte, ordine = precedenza
 
     // ================== QUERY PER GRAFICI ==================
 
@@ -49,7 +45,9 @@ try {
         COALESCE(SUM(CASE WHEN alt_ft BETWEEN 10000 AND 19999 THEN 1 ELSE 0 END),0) AS '10-20k',
         COALESCE(SUM(CASE WHEN alt_ft BETWEEN 20000 AND 29999 THEN 1 ELSE 0 END),0) AS '20-30k',
         COALESCE(SUM(CASE WHEN alt_ft >= 30000 THEN 1 ELSE 0 END),0) AS '30k+'
-        FROM aircraft WHERE alt_ft IS NOT NULL")->fetchArray(SQLITE3_ASSOC);
+        FROM aircraft WHERE typeof(alt_ft) IN ('integer', 'real')")->fetchArray(SQLITE3_ASSOC);
+    // typeof(): alcune quote sono stringhe vuote ('') e in SQLite un testo è sempre
+    // "maggiore" di un numero, quindi finivano tutte nella fascia 30k+.
 
     // 2. Modelli più frequenti
     $models = [];
@@ -66,16 +64,29 @@ try {
     $res = $db->query("SELECT model_t, AVG(gs_kt) as avg_speed FROM aircraft WHERE gs_kt > 0 GROUP BY model_t ORDER BY avg_speed DESC LIMIT 10");
     while ($row = $res->fetchArray(SQLITE3_ASSOC)) $speedData[] = $row;
 
-    // 5. Eventi per giorno (ultimi 30 giorni)
-    $dailyCounts = [];
-    $res = $db->query("SELECT substr(last_seen_utc,1,10) as day, COUNT(*) as cnt FROM aircraft WHERE last_seen_utc >= date('now','-30 days') GROUP BY day ORDER BY day ASC");
+    // 5. Contatti distinti per giorno (ultimi 30 giorni, calendario italiano).
+    // Prima si contavano gli aerei di `aircraft` per data dell'ULTIMO avvistamento:
+    // un mezzo visto ogni giorno compariva solo nel giorno più recente e i giorni
+    // passati si "svuotavano" col tempo. Ora si parte da events (ogni avvistamento)
+    // e si contano gli hex distinti per giorno italiano (non UTC).
+    $romeTz = new DateTimeZone('Europe/Rome');
+    $utcTz = new DateTimeZone('UTC');
+    $firstDay = (new DateTime('today', $romeTz))->modify('-29 days');
+    $cutoffUtc = (clone $firstDay)->setTimezone($utcTz)->format('Y-m-d H:i:s') . ' UTC';
+    $dailyHex = [];
+    $stmt = $db->prepare("SELECT hex, first_seen_utc FROM events WHERE first_seen_utc >= :c");
+    $stmt->bindValue(':c', $cutoffUtc);
+    $res = $stmt->execute();
     while ($row = $res->fetchArray(SQLITE3_ASSOC)) {
-        $dailyCounts[$row['day']] = $row['cnt'];
+        $ts = strtotime($row['first_seen_utc']);
+        if ($ts === false) continue;
+        $day = (new DateTime('@' . $ts))->setTimezone($romeTz)->format('Y-m-d');
+        $dailyHex[$day][$row['hex']] = true;
     }
     $dates = [];
-    for ($i = 29; $i >= 0; $i--) {
-        $d = date('Y-m-d', strtotime("-{$i} days"));
-        $dates[] = ['day' => $d, 'cnt' => $dailyCounts[$d] ?? 0];
+    for ($i = 0, $d = clone $firstDay; $i < 30; $i++, $d->modify('+1 day')) {
+        $k = $d->format('Y-m-d');
+        $dates[] = ['day' => $k, 'cnt' => isset($dailyHex[$k]) ? count($dailyHex[$k]) : 0];
     }
 
     // 6. Top 10 HEX più frequenti
@@ -136,8 +147,26 @@ try {
     $recordConsistency = $db->query("SELECT hex, callsign, model_t, seen_count FROM aircraft
         ORDER BY seen_count DESC LIMIT 1")->fetchArray(SQLITE3_ASSOC);
 
-    $busiestDay = $db->query("SELECT substr(first_seen_utc,1,10) as day, COUNT(*) as cnt
-        FROM events GROUP BY day ORDER BY cnt DESC LIMIT 1")->fetchArray(SQLITE3_ASSOC);
+    // Giorno più intenso e heatmap settimana x ora: calcolati in ora italiana
+    // (prima in UTC, cioè sfasati di 1-2 ore e con i giorni tagliati alle 01/02).
+    $eventsPerDay = [];
+    $heatmapDayNames = ['Domenica', 'Lunedì', 'Martedì', 'Mercoledì', 'Giovedì', 'Venerdì', 'Sabato'];
+    $heatmapMatrix = array_fill(0, 7, array_fill(0, 24, 0));
+    $res = $db->query("SELECT first_seen_utc FROM events WHERE first_seen_utc IS NOT NULL AND first_seen_utc != ''");
+    while ($row = $res->fetchArray(SQLITE3_ASSOC)) {
+        $ts = strtotime($row['first_seen_utc']);
+        if ($ts === false) continue;
+        $local = (new DateTime('@' . $ts))->setTimezone($romeTz);
+        $day = $local->format('Y-m-d');
+        $eventsPerDay[$day] = ($eventsPerDay[$day] ?? 0) + 1;
+        $heatmapMatrix[(int)$local->format('w')][(int)$local->format('G')]++;
+    }
+    $busiestDay = null;
+    if ($eventsPerDay) {
+        arsort($eventsPerDay);
+        $busiestDay = ['day' => array_key_first($eventsPerDay), 'cnt' => reset($eventsPerDay)];
+    }
+    $heatmapMax = max(array_map('max', $heatmapMatrix));
 
     // 9. Codici squawk
     $squawkTop = [];
@@ -151,21 +180,8 @@ try {
         FROM events WHERE squawk IN ('7500','7600','7700') ORDER BY first_seen_utc DESC");
     while ($row = $res->fetchArray(SQLITE3_ASSOC)) $emergencySquawks[] = $row;
 
-    // 10. Heatmap attività: giorno della settimana x ora (UTC)
-    $heatmapDayNames = ['Domenica', 'Lunedì', 'Martedì', 'Mercoledì', 'Giovedì', 'Venerdì', 'Sabato'];
-    $heatmapMatrix = array_fill(0, 7, array_fill(0, 24, 0));
-    $heatmapMax = 0;
-    $res = $db->query("SELECT
-            CAST(strftime('%w', substr(first_seen_utc,1,19)) AS INTEGER) as dow,
-            CAST(strftime('%H', substr(first_seen_utc,1,19)) AS INTEGER) as hh,
-            COUNT(*) as cnt
-        FROM events
-        WHERE first_seen_utc IS NOT NULL AND first_seen_utc != ''
-        GROUP BY dow, hh");
-    while ($row = $res->fetchArray(SQLITE3_ASSOC)) {
-        $heatmapMatrix[(int)$row['dow']][(int)$row['hh']] = (int)$row['cnt'];
-        if ((int)$row['cnt'] > $heatmapMax) $heatmapMax = (int)$row['cnt'];
-    }
+    // 10. Heatmap attività giorno della settimana x ora: calcolata sopra, insieme
+    // al giorno più intenso (una sola lettura di events, in ora italiana).
 
 } catch (Exception $e) {
     http_response_code(500);
@@ -385,10 +401,10 @@ try {
         <?php endif; ?>
     </div>
 
-    <h3>Eventi giornalieri (ultimi 30 giorni)</h3>
+    <h3>Contatti distinti al giorno (ultimi 30 giorni)</h3>
     <canvas id="dailyChart" width="600" height="180"></canvas>
 
-    <h3>🕐 Attività per ora del giorno e giorno della settimana (UTC)</h3>
+    <h3>🕐 Attività per ora del giorno e giorno della settimana (ora italiana)</h3>
     <div class="heatmap-wrap">
         <table class="heatmap">
             <thead>
@@ -522,11 +538,11 @@ try {
             <ul>
                 <?php foreach ($emergencySquawks as $es): ?>
                     <li>
-                        <?= htmlspecialchars($es['first_seen_utc']) ?> —
+                        <?= htmlspecialchars(format_date_it($es['first_seen_utc'])) ?> —
                         squawk <strong><?= htmlspecialchars($es['squawk']) ?></strong> —
                         <a href="index.php?hex=<?= urlencode($es['hex']) ?>"><?= htmlspecialchars($es['callsign'] ?: $es['hex']) ?></a>
                         <?= $es['model_t'] ? ' (' . htmlspecialchars($es['model_t']) . ')' : '' ?>
-                        <?= $es['alt_ft'] !== '' ? ' — ' . number_format((int)$es['alt_ft']) . ' ft' : '' ?>
+                        <?= ($es['alt_ft'] !== '' && $es['alt_ft'] !== null) ? ' — ' . number_format((int)$es['alt_ft']) . ' ft' : '' ?>
                     </li>
                 <?php endforeach; ?>
             </ul>
@@ -545,7 +561,7 @@ try {
             data: {
                 labels: <?= json_encode(array_column($dates, 'day')) ?>,
                 datasets: [{
-                    label: 'Numero voli',
+                    label: 'Contatti distinti',
                     data: <?= json_encode(array_column($dates, 'cnt')) ?>,
                     borderColor: 'rgba(75, 192, 192, 1)',
                     backgroundColor: 'rgba(75, 192, 192, 0.2)',
@@ -565,7 +581,7 @@ try {
             data: {
                 labels: ['0-10k', '10-20k', '20-30k', '30k+'],
                 datasets: [{
-                    label: 'Numero voli',
+                    label: 'Contatti (ultima quota rilevata)',
                     data: [<?= implode(',', $altBins) ?>],
                     backgroundColor: 'rgba(54, 162, 235, 0.6)'
                 }]

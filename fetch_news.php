@@ -42,6 +42,11 @@ foreach ($feeds as $feed) {
 
     $items = normalize_feed_items($xml);
     $newCount = 0;
+    // Prima lettura di una fonte appena aggiunta: il feed contiene già 10-50
+    // articoli arretrati e ognuno generava un avviso nella campanella. Si
+    // archiviano tutti, ma si avvisa solo per quelli degli ultimi 2 giorni.
+    $firstFetch = empty($feed['last_fetched_at']);
+    $alertCutoff = gmdate('Y-m-d H:i:s', time() - 2 * 86400);
 
     foreach ($items as $item) {
         if ($item['guid'] === '' || $item['title'] === '') {
@@ -86,7 +91,9 @@ foreach ($feeds as $feed) {
         }
 
         $excerpt = mb_substr($bodyText, 0, NEWS_ARTICLE_EXCERPT_LEN);
-        create_alert('new_article', null, null, $item['title'], $excerpt, $articleId);
+        if (!$firstFetch || ($item['published_at'] !== null && $item['published_at'] >= $alertCutoff)) {
+            create_alert('new_article', null, null, $item['title'], $excerpt, $articleId);
+        }
 
         $newCount++;
     }

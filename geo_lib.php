@@ -47,6 +47,47 @@ function patternMatch($value, $pattern) {
 }
 
 /**
+ * Normalizza il pattern di una regola prima di salvarla (rules.php, anche in
+ * import). null = pattern non utilizzabile. Casi prima salvati "muti", cioè
+ * accettati ma senza mai corrispondere a nulla:
+ *  - trattino tipografico (– —) incollato da documenti: non era un intervallo;
+ *  - "E00000-E3FFFF" senza spazi sul campo hex (dove un '-' non può comparire):
+ *    era letto come prefisso letterale;
+ *  - estremi invertiti ("E3FFFF - E00000"): nessun valore può rientrarvi.
+ * Sugli altri campi un '-' senza spazi resta un prefisso (es. "D-A*", "I-").
+ */
+function normalize_rule_pattern(string $field, $pattern): ?string {
+    if (!is_scalar($pattern)) {
+        return null;
+    }
+    $p = trim(str_replace(["\u{2013}", "\u{2014}"], ' - ', (string)$pattern));
+    if ($p === '') {
+        return null;
+    }
+    $spaced = preg_match('/^(\S+)\s+-\s+(\S+)$/', $p, $m);
+    if (!$spaced && $field === 'hex') {
+        $spaced = preg_match('/^([^\s-]+)\s*-\s*([^\s-]+)$/', $p, $m);
+    }
+    if ($spaced) {
+        $low = strtoupper($m[1]);
+        $high = strtoupper($m[2]);
+        if (rtrim($low, '*') === '' || rtrim($high, '*') === '') {
+            return null;
+        }
+        if (strcmp(rtrim($low, '*'), rtrim($high, '*')) > 0) {
+            [$low, $high] = [$high, $low];
+        }
+        return $low . ' - ' . $high;
+    }
+    return preg_replace('/\s+/', ' ', $p);
+}
+
+/** Colore di sfondo di una regola: solo "#rrggbb" (finisce in un attributo style). */
+function normalize_rule_color($color): ?string {
+    return (is_string($color) && preg_match('/^#[0-9A-Fa-f]{6}$/', trim($color))) ? strtolower(trim($color)) : null;
+}
+
+/**
  * Verifica se $value (già in maiuscolo) rientra nell'intervallo [$low, $high].
  * Gli estremi possono terminare con '*' per indicare un prefisso (es. "E00*").
  * Il confronto è lessicografico sui primi N caratteri, dove N è la lunghezza
@@ -66,7 +107,14 @@ function rangeMatch($value, $lowPattern, $highPattern) {
     $vLow = strlen($value) >= $lowLen ? substr($value, 0, $lowLen) : str_pad($value, $lowLen, '0');
     $vHigh = strlen($value) >= $highLen ? substr($value, 0, $highLen) : str_pad($value, $highLen, '0');
 
-    return $vLow >= $low && $vHigh <= $high;
+    // strcmp() e NON gli operatori >= / <=: in PHP 8, fra due stringhe che
+    // "sembrano numeri" il confronto diventa numerico, e molti hex ICAO sono
+    // letti come notazione scientifica. "7102E3" vale 7.102.000 (quindi >= "738000"
+    // e dentro il blocco di Israele), e il limite "70E000" della regola cambogiana
+    // vale appena 70, così ogni hex di sole cifre non già catturato finiva in KH.
+    // Risultato riscontrato in produzione (23/09/2026): 10 aerei con nazionalità
+    // sbagliata, fra cui due sauditi classificati israeliani e due greci cambogiani.
+    return strcmp($vLow, $low) >= 0 && strcmp($vHigh, $high) <= 0;
 }
 
 /** Mappatura prefissi di registrazione -> codice nazione (fallback secondario). */
@@ -86,7 +134,15 @@ function getCountryFromReg($reg) {
         'XC-' => 'MX', 'PT-' => 'BR', 'LV-' => 'AR', 'CC-' => 'CL', 'HK-' => 'CO',
         'OB-' => 'PE', 'YV-' => 'VE', 'TI-' => 'CR', 'TG-' => 'GT', 'HR-' => 'HN',
         'YS-' => 'SV', 'YN-' => 'NI', 'HP-' => 'PA', 'CU-' => 'CU', 'HI-' => 'DO',
-        'V2-' => 'AG', '8P-' => 'BB', 'J3-' => 'GD', '9Y-' => 'TT', 'PJ-' => 'SX'
+        'V2-' => 'AG', '8P-' => 'BB', 'J3-' => 'GD', '9Y-' => 'TT', 'PJ-' => 'SX',
+        // Europa e Africa/Medio Oriente mancanti: si ricade qui solo quando nessuna
+        // regola hex di rules.php corrisponde (es. 9G-EXE, Falcon del Ghana, era ZZ).
+        'SX-' => 'GR', 'CS-' => 'PT', 'EI-' => 'IE', 'LN-' => 'NO', 'SE-' => 'SE',
+        'OH-' => 'FI', 'OY-' => 'DK', 'LX-' => 'LU', 'ES-' => 'EE', 'YL-' => 'LV',
+        'LY-' => 'LT', 'UR-' => 'UA', 'RA-' => 'RU', 'EW-' => 'BY', 'ER-' => 'MD',
+        'ZA-' => 'AL', 'E7-' => 'BA', '4O-' => 'ME', '4K-' => 'AZ', 'HZ-' => 'SA',
+        'A9C-' => 'BH', 'A4O-' => 'OM', 'YI-' => 'IQ', 'ZS-' => 'ZA', '9G-' => 'GH',
+        '6V-' => 'SN', '5N-' => 'NG', '5Y-' => 'KE', 'ET-' => 'ET', 'ST-' => 'SD'
     ];
     if (empty($reg)) return null;
     $reg = strtoupper(trim($reg));
@@ -145,14 +201,25 @@ function getCountryCode($hex, $reg, $callsign, $customRules = []) {
     return 'ZZ';
 }
 
-/** Carica le regole di nazionalità da un database già aperto su events.db. */
+/**
+ * Carica le regole di nazionalità da un database già aperto su events.db.
+ *
+ * Ordine = precedenza (vince la prima regola che corrisponde): dalla più recente
+ * alla più vecchia, cioè lo stesso ordine in cui rules.php le mostra. Prima non
+ * c'era ORDER BY e si applicava di fatto l'ordine di inserimento, l'opposto di
+ * quello visualizzato — e una regola aggiunta dopo le allocazioni ICAO per blocco
+ * (es. una regola dedicata a un singolo hex, o a un sotto-blocco come Hong Kong
+ * 789000-789FFF, contenuto nel blocco cinese 780000-7BFFFF) non poteva mai
+ * prevalere su di esse. Unico punto da cui tutte le pagine leggono le regole.
+ */
 function loadCountryRules(SQLite3 $db): array {
     $rules = [];
     try {
-        $res = $db->query("SELECT field, pattern, country_code FROM country_rules");
+        $res = $db->query("SELECT field, pattern, country_code FROM country_rules ORDER BY id DESC");
         while ($r = $res->fetchArray(SQLITE3_ASSOC)) {
             $rules[] = $r;
         }
+        $res->finalize();
     } catch (Exception $e) {
         // Tabella assente (deploy nuovo, rules.php mai aperta): si ripiega sui
         // prefissi predefiniti, senza interrompere la pagina.

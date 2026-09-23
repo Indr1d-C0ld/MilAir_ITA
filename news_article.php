@@ -16,7 +16,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         require_role('collaboratore');
         $body = trim($_POST['body'] ?? '');
         $user = current_user();
-        if ($body === '' || mb_strlen($body) > 2000) {
+        // L'articolo deve esistere: prima un POST con un id qualsiasi inseriva
+        // comunque il commento (orfano, mai visibile) prima del controllo 404.
+        $chk = $db->prepare("SELECT 1 FROM articles WHERE id = ?");
+        $chk->bindValue(1, $id);
+        $exists = (bool)$chk->execute()->fetchArray(SQLITE3_NUM);
+        if (!$exists) {
+            $flashMsg = 'Articolo non trovato.';
+            $flashType = 'error';
+        } elseif ($body === '' || mb_strlen($body) > 2000) {
             $flashMsg = 'Il commento deve avere tra 1 e 2000 caratteri.';
             $flashType = 'error';
         } else {
@@ -32,8 +40,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         require_role('collaboratore');
         $commentId = (int)($_POST['comment_id'] ?? 0);
         $user = current_user();
-        $stmt = $db->prepare("SELECT user_id FROM comments WHERE id = ? AND deleted_at IS NULL");
+        $stmt = $db->prepare("SELECT user_id FROM comments WHERE id = ? AND article_id = ? AND deleted_at IS NULL");
         $stmt->bindValue(1, $commentId);
+        $stmt->bindValue(2, $id);
         $comment = $stmt->execute()->fetchArray(SQLITE3_ASSOC);
         if (!$comment) {
             $flashMsg = 'Commento non trovato.';

@@ -221,6 +221,16 @@ def main():
         aircraft: List[Aircraft] = []
         for ac in merged:
             try:
+                # readsb/tar1090 non hanno un campo "ground": un aereo a terra ha
+                # alt_baro == "ground". Prima si leggeva ac["ground"], sempre assente,
+                # e la colonna ground restava NULL per tutti i contatti.
+                alt_raw = ac.get("alt_baro")
+                if alt_raw == "ground":
+                    on_ground = True
+                elif safe_int(alt_raw) is not None:
+                    on_ground = False
+                else:
+                    on_ground = safe_bool(ac.get("ground"))
                 aircraft.append(
                     Aircraft(
                         (ac.get("hex") or "").lower(),
@@ -232,7 +242,7 @@ def main():
                         safe_float(ac.get("seen_pos_timestamp") or ac.get("seen_timestamp")),
                         (ac.get("r") or ac.get("reg") or "").strip() or None,
                         str(ac.get("squawk")).strip() if ac.get("squawk") else None,
-                        safe_bool(ac.get("ground")),
+                        on_ground,
                         (ac.get("desc") or None),
                         (ac.get("t") or None),
                         (ac.get("category") or None),
@@ -253,13 +263,18 @@ def main():
             if now_ts - last_mil_alert.get(ac.hex, 0) < args.mil_cooldown:
                 continue
 
+            # "" solo per i valori assenti: con `x or ""` anche quota 0 ft e
+            # velocità 0 kt (valori validi) diventavano vuoti.
+            def blank(v):
+                return "" if v is None else v
+
             row = {
                 "first_seen_utc": now_str, "hex": ac.hex,
                 "callsign": ac.flight, "reg": ac.reg or "",
                 "model_t": ac.model_t or "",
-                "lat": ac.lat or "", "lon": ac.lon or "",
-                "alt_ft": ac.alt_baro or "", "gs_kt": ac.gs or "",
-                "squawk": ac.squawk or "", "ground": ac.ground,
+                "lat": blank(ac.lat), "lon": blank(ac.lon),
+                "alt_ft": blank(ac.alt_baro), "gs_kt": blank(ac.gs),
+                "squawk": ac.squawk or "", "ground": blank(ac.ground),
                 "category": ac.category or "",
             }
             event_rows.append(row)

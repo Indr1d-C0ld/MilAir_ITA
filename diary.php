@@ -366,7 +366,7 @@ $page_title = $detail ? ('Diario · ' . d_day_it($day)) : 'Diario di bordo';
     <div class="stats-grid">
 
         <div class="stats-card">
-            <h2>Attività per ora (UTC)</h2>
+            <h2>Attività per ora (<?= ($digest['hours_tz'] ?? '') === 'Europe/Rome' ? 'ora italiana' : 'UTC' ?>)</h2>
             <table><?php for ($h = 0; $h < 24; $h++): if ($hours[$h] === 0) continue; ?>
                 <tr><td><?= sprintf('%02d', $h) ?></td><td><?= number_format($hours[$h]) ?></td><td><?= d_bar($hours[$h], $hmax, 110) ?></td></tr>
             <?php endfor; ?></table>
@@ -445,7 +445,7 @@ $page_title = $detail ? ('Diario · ' . d_day_it($day)) : 'Diario di bordo';
                 <tr><th>Ora</th><th>HEX</th><th>Callsign</th><th>Squawk</th></tr>
                 <?php foreach ($digest['emergencies'] as $r): ?>
                 <tr>
-                    <td><?= d_h(substr((string) $r['first_seen_utc'], 11, 5)) ?></td>
+                    <td><?= d_h(substr(format_date_it((string) $r['first_seen_utc']), 11, 5)) ?></td>
                     <td><a href="index.php?hex=<?= urlencode($r['hex']) ?>"><?= d_h($r['hex']) ?></a></td>
                     <td><?= d_h($r['callsign']) ?></td>
                     <td><strong title="<?= d_h($r['label']) ?>"><?= d_h($r['squawk']) ?></strong></td>

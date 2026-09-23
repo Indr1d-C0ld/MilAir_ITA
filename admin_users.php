@@ -90,10 +90,16 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                         $flashMsg = 'Dati aggiornati. La nuova password NON è stata impostata (minimo ' . PASSWORD_MIN_LENGTH . ' caratteri).';
                         $flashType = 'error';
                     } else {
+                        $newHash = hash_password($newPassword);
                         $stmt = $db->prepare("UPDATE users SET password_hash = ? WHERE id = ?");
-                        $stmt->bindValue(1, hash_password($newPassword));
+                        $stmt->bindValue(1, $newHash);
                         $stmt->bindValue(2, $id);
                         $stmt->execute();
+                        // Le sessioni aperte di quell'utente decadono alla prossima
+                        // richiesta; se l'admin ha reimpostato la propria, la sua resta.
+                        if ($id === (int)$me['id']) {
+                            $_SESSION['user']['pwfp'] = password_fingerprint($newHash);
+                        }
                         $flashMsg = 'Utente aggiornato e password reimpostata.';
                     }
                 } else {
@@ -120,10 +126,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $flashMsg = 'Le due nuove password non coincidono.';
             $flashType = 'error';
         } else {
+            $newHash = hash_password($new);
             $stmt = $db->prepare("UPDATE users SET password_hash = ? WHERE id = ?");
-            $stmt->bindValue(1, hash_password($new));
+            $stmt->bindValue(1, $newHash);
             $stmt->bindValue(2, $me['id']);
             $stmt->execute();
+            // Questa sessione resta valida; le altre aperte con la vecchia password
+            // decadono alla prossima richiesta (revalidate_session_user()).
+            $_SESSION['user']['pwfp'] = password_fingerprint($newHash);
             $flashMsg = 'La tua password è stata aggiornata.';
         }
     }
@@ -232,7 +242,7 @@ while ($row = $res->fetchArray(SQLITE3_ASSOC)) {
                                     <input type="checkbox" name="is_active" value="1" <?= (int)$u['is_active'] ? 'checked' : '' ?>>
                                 </label>
                                 <label>Nuova password (lascia vuoto per non cambiarla)
-                                    <input type="password" name="new_password" minlength="10">
+                                    <input type="password" name="new_password" minlength="<?= PASSWORD_MIN_LENGTH ?>">
                                 </label>
                                 <button type="submit">💾 Salva</button>
                                 <button type="button" onclick="toggleEditRow('<?= $rowId ?>')">Annulla</button>
@@ -249,8 +259,8 @@ while ($row = $res->fetchArray(SQLITE3_ASSOC)) {
         <?= csrf_field() ?>
         <input type="hidden" name="change_own_password" value="1">
         <label>Password attuale: <input type="password" name="current_password" required></label>
-        <label>Nuova password: <input type="password" name="new_password" required minlength="10"></label>
-        <label>Conferma nuova password: <input type="password" name="new_password_confirm" required minlength="10"></label>
+        <label>Nuova password: <input type="password" name="new_password" required minlength="<?= PASSWORD_MIN_LENGTH ?>"></label>
+        <label>Conferma nuova password: <input type="password" name="new_password_confirm" required minlength="<?= PASSWORD_MIN_LENGTH ?>"></label>
         <button type="submit">Aggiorna password</button>
     </form>
 

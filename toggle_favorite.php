@@ -21,7 +21,7 @@ require_csrf();
 
 $hex = $_POST['hex'] ?? '';
 $action = $_POST['action'] ?? 'add';
-$returnUrl = $_POST['return'] ?? 'index.php';
+$returnUrl = safe_local_url($_POST['return'] ?? '');
 
 if (!$hex) {
     if ($isAjax) {

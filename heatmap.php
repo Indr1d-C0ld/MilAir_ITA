@@ -14,11 +14,14 @@ if (!preg_match('/^[0-9a-f]{6}$/', $hexFilter)) {
 }
 
 if ($hexFilter !== '') {
-    $stmt = $db->prepare("SELECT lat, lon, first_seen_utc FROM events WHERE lat IS NOT NULL AND lon IS NOT NULL AND hex = :hex LIMIT 50000");
+    $stmt = $db->prepare("SELECT lat, lon, first_seen_utc FROM events WHERE lat IS NOT NULL AND lon IS NOT NULL AND hex = :hex ORDER BY first_seen_utc DESC LIMIT 50000");
     $stmt->bindValue(':hex', $hexFilter);
     $res = $stmt->execute();
 } else {
-    $res = $db->query("SELECT lat, lon, first_seen_utc FROM events WHERE lat IS NOT NULL AND lon IS NOT NULL LIMIT 50000");
+    // Oltre il limite si tengono le posizioni più recenti: senza ORDER BY SQLite
+    // restituiva le prime in ordine di chiave, cioè le più vecchie, e i filtri
+    // "Oggi/Settimana" della heatmap sarebbero rimasti vuoti.
+    $res = $db->query("SELECT lat, lon, first_seen_utc FROM events WHERE lat IS NOT NULL AND lon IS NOT NULL ORDER BY first_seen_utc DESC LIMIT 50000");
 }
 
 $points = [];
@@ -26,7 +29,9 @@ while ($row = $res->fetchArray(SQLITE3_ASSOC)) {
     $points[] = [
         'lat' => $row['lat'],
         'lon' => $row['lon'],
-        'date' => $row['first_seen_utc']
+        'date' => $row['first_seen_utc'],
+        // Millisecondi per i filtri JS (new Date() non legge "... UTC" ovunque).
+        'ms' => (strtotime($row['first_seen_utc']) ?: 0) * 1000
     ];
 }
 $pointsJson = json_encode($points);
@@ -102,6 +107,7 @@ $pageTitle = $hexFilter !== '' ? 'Heatmap — HEX ' . strtoupper($hexFilter) : '
             flex-wrap: wrap;
         }
         .time-controls label { font-weight: 500; }
+        .period-status { font-size: 0.9em; color: #495057; }
         .quick-buttons a {
             padding: 4px 8px;
             background: #007bff;
@@ -172,6 +178,7 @@ $pageTitle = $hexFilter !== '' ? 'Heatmap — HEX ' . strtoupper($hexFilter) : '
             <input type="range" id="timeSlider" min="1" max="3650" value="7" style="width: 200px;">
             <span id="sliderValue">7</span>
         </label>
+        <span id="periodStatus" class="period-status"></span>
     </div>
 
     <script>
@@ -190,7 +197,24 @@ $pageTitle = $hexFilter !== '' ? 'Heatmap — HEX ' . strtoupper($hexFilter) : '
         let heatLayer = null;
         let hasFitBounds = false;
 
+        // Mezzanotte di oggi in ora italiana, qualunque sia il fuso del browser: il
+        // pulsante "Oggi" copre il giorno di calendario, come nella tabella (prima
+        // erano le ultime 24 ore, quindi anche mezza giornata di ieri).
+        function romeMidnight() {
+            const now = new Date();
+            const p = {};
+            new Intl.DateTimeFormat('en-GB', {
+                timeZone: 'Europe/Rome', year: 'numeric', month: '2-digit', day: '2-digit',
+                hour: '2-digit', minute: '2-digit', second: '2-digit', hourCycle: 'h23'
+            }).formatToParts(now).forEach(x => { p[x.type] = x.value; });
+            const romeWall = Date.UTC(+p.year, +p.month - 1, +p.day, +p.hour, +p.minute, +p.second);
+            const offset = romeWall - Math.floor(now.getTime() / 1000) * 1000;
+            return new Date(Date.UTC(+p.year, +p.month - 1, +p.day) - offset);
+        }
+        let todayMode = false; // attivato dal pulsante "Oggi", annullato da slider/unità
+
         function getCutoff(unit, value) {
+            if (todayMode) return romeMidnight();
             const now = new Date();
             switch(unit) {
                 case 'hours': return new Date(now.getTime() - value * 60 * 60 * 1000);
@@ -206,10 +230,7 @@ $pageTitle = $hexFilter !== '' ? 'Heatmap — HEX ' . strtoupper($hexFilter) : '
             const value = parseInt(document.getElementById('sliderValue').textContent, 10);
             const cutoff = getCutoff(unit, value);
 
-            const filtered = allPoints.filter(p => {
-                const date = new Date(p.date);
-                return date >= cutoff;
-            });
+            const filtered = allPoints.filter(p => p.ms >= cutoff.getTime());
 
             if (heatLayer) {
                 map.removeLayer(heatLayer);
@@ -229,9 +250,12 @@ $pageTitle = $hexFilter !== '' ? 'Heatmap — HEX ' . strtoupper($hexFilter) : '
                     map.fitBounds(points, { padding: [40, 40], maxZoom: 11 });
                     hasFitBounds = true;
                 }
-            } else {
-                alert('Nessun punto nel periodo selezionato.');
             }
+            // Messaggio nel pannello invece di alert(), che trascinando lo slider su
+            // un periodo vuoto si ripresentava a ogni passo.
+            document.getElementById('periodStatus').textContent = filtered.length === 0
+                ? 'Nessun punto nel periodo selezionato'
+                : filtered.length.toLocaleString('it-IT') + (filtered.length === 1 ? ' posizione' : ' posizioni');
         }
 
         document.querySelectorAll('.quick-buttons a').forEach(btn => {
@@ -249,15 +273,17 @@ $pageTitle = $hexFilter !== '' ? 'Heatmap — HEX ' . strtoupper($hexFilter) : '
                     case 'all': unitSelect.value = 'days'; slider.value = 3650; break;
                 }
                 sliderVal.textContent = slider.value;
+                todayMode = (period === 'today');
                 updateHeatmap();
             });
         });
 
         document.getElementById('timeSlider').addEventListener('input', function() {
             document.getElementById('sliderValue').textContent = this.value;
+            todayMode = false;
             updateHeatmap();
         });
-        document.getElementById('timeUnit').addEventListener('change', updateHeatmap);
+        document.getElementById('timeUnit').addEventListener('change', () => { todayMode = false; updateHeatmap(); });
 
         updateHeatmap();
     </script>

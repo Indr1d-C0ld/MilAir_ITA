@@ -41,11 +41,11 @@ Tutta la logica di identificazione "è un velivolo militare" avviene lato adsb.f
 - **Dashboard principale** ([`index.php`](index.php)) con tabella dei contatti, ricerca, filtri, preferiti ([`favorites.php`](favorites.php)), note e correzioni manuali dell'analista su registrazione/callsign/modello ([`save_identity.php`](save_identity.php)). Ogni contatto con callsign riconoscibile (es. `IAM9001`) mostra il codice operatore/forza aerea a 3 lettere derivato automaticamente, col relativo logo se disponibile ([`download_opflags.php`](download_opflags.php)) — badge cliccabile come scorciatoia diretta di ricerca filtrata (`?operator=IAM`, sempre su tutto lo storico). Pulsanti 🔄 in tabella permettono il recupero istantaneo ([`fetch_assets_now.php`](fetch_assets_now.php)) di silhouette/foto/disegni/logo mancanti per un singolo contatto, senza attendere il prossimo ciclo cron; è disponibile anche l'aggiornamento automatico della pagina con intervallo regolabile. Righe di tabella ad altezza fissa e compatta: le note lunghe vengono troncate su una riga (tooltip al passaggio del mouse per leggerle per intero) e le miniature (silhouette, foto reale, foto modello, disegno tecnico) mostrano un'anteprima ingrandita al passaggio del mouse.
 - **Motore di regole personalizzate** ([`rules.php`](rules.php)) per evidenziare righe, mappare nazionalità, marcare contatti (es. ❓ = in watchlist) e generare note automatiche in base a pattern su hex/reg/callsign/modello.
 - **Sistema di alert** ([`alert_scan.php`](alert_scan.php), eseguito ogni 5 minuti) che genera notifiche per: contatti in watchlist che ricompaiono, squawk di emergenza (7500/7600/7700), contatti mai visti prima con rarità *Mythic*/*Legendary* ([`update_rarity.php`](update_rarity.php)), corrispondenze con le regole personalizzate, e regole di notifica su contatti non ancora visti (hex/callsign/reg attesi).
-- **Statistiche e heatmap** ([`stats.php`](stats.php), [`heatmap.php`](heatmap.php)) su nazionalità (con bandierine), modelli, frequenza dei contatti, e classifiche (forze aeree/compagnie con logo, callsign, registrazioni).
+- **Statistiche e heatmap** ([`stats.php`](stats.php), [`heatmap.php`](heatmap.php)) su nazionalità (con bandierine), modelli, frequenza dei contatti, e classifiche (forze aeree/compagnie con logo, callsign, registrazioni). Giorni e ore sono sempre quelli del calendario italiano (Europe/Rome), anche se il database memorizza gli istanti in UTC: il pulsante "Oggi" di tabella, mappa e heatmap copre il giorno di calendario, non le ultime 24 ore.
 - **Rassegna stampa correlata** ([`news.php`](news.php)): un aggregatore RSS/Atom configurabile ([`admin_feeds.php`](admin_feeds.php)) che scarica periodicamente articoli, estrae parole chiave e genera alert per le notizie pertinenti.
 - **Diario di bordo** ([`diary.php`](diary.php)): una sintesi giornaliera deterministica dei contatti (per ora, per operatore/nazionalità/modello, mezzi ricorrenti, contatti rari, squawk di emergenza, novità rispetto ai 14 giorni precedenti). Con [`diary_build.php`](diary_build.php) (cron notturno) la voce di ieri viene calcolata e **pubblicata automaticamente**; senza cron resta calcolabile e pubblicabile a mano dall'admin. Pubblica in lettura solo per i giorni effettivamente pubblicati. Supporta opzionalmente una sintesi narrativa generata da un assistente IA in esecuzione su un server [Ollama](https://ollama.com) nella propria rete locale ([`ai_lib.php`](ai_lib.php), mai un servizio cloud, sempre un passo manuale): la bozza generata va sempre rivista da un operatore.
 - **Gestione utenti multi-ruolo** ([`admin_users.php`](admin_users.php)) con log accessi ([`admin_access_log.php`](admin_access_log.php), [`admin_access_stats.php`](admin_access_stats.php)) e un modulo di richiesta accesso pubblico con approvazione manuale da parte di un admin ([`richieste.php`](richieste.php) → [`admin_richieste.php`](admin_richieste.php)).
-- **Export dati** ([`export.php`](export.php), [`export_rules.php`](export_rules.php)) in JSON/CSV.
+- **Export dati**: [`export.php`](export.php) esporta in CSV (o in versione stampabile/PDF dal browser) esattamente le righe che la tabella mostra con gli stessi parametri — filtri, pulsanti rapidi, correzioni manuali, note automatiche e ordinamento, senza paginazione — perché tabella ed export condividono la stessa pipeline ([`table_lib.php`](table_lib.php)); [`export_rules.php`](export_rules.php) esporta le regole in JSON (reimportabili da `rules.php`).
 
 ## Architettura
 
@@ -96,6 +96,8 @@ Tutti e tre vengono creati automaticamente (schema `CREATE TABLE IF NOT EXISTS`)
 ├── download_*.php                                           → script CLI (cron) di arricchimento (foto/silhouette/disegni/loghi operatore)
 ├── fetch_news.php, fetch_notams.php, news_lib.php           → aggregazione RSS e NOTAM
 ├── geo_lib.php                                              → nazionalità, operatore e pattern matching (definizioni canoniche, usate da tutte le pagine)
+├── table_lib.php                                            → pipeline condivisa della tabella contatti (filtri, regole, ordinamento): la usano index.php ed export.php
+├── diary.php, diary_lib.php, diary_build.php, ai_lib.php    → Diario di bordo (digest giornaliero, pubblicazione, sintesi IA locale opzionale)
 ├── satellite_tile.php, weather_tile.php                     → proxy server-side per i layer mappa opzionali (con limite per IP e cache a scadenza)
 ├── flight_mil_ita.py, csv_to_db.py                          → pipeline di raccolta/importazione dati
 ├── geo_secrets.php.example, map_secrets.php.example,
@@ -177,7 +179,7 @@ sudo systemctl enable --now milair-logger
 | ogni 5 min | `alert_scan.php` | scansiona nuovi eventi e genera alert |
 | ogni 15 min | `fetch_news.php` | scarica nuovi articoli RSS/Atom |
 | ogni ora | `update_rarity.php` | ricalcola la cache di rarità dei contatti |
-| ogni 3 ore | `fetch_notams.php` | aggiorna i NOTAM per l'overlay mappa |
+| ogni 3 ore (al minuto 7) | `fetch_notams.php` | aggiorna i NOTAM per l'overlay mappa (sfalsato rispetto ai job delle :00 che scrivono su `events.db`) |
 | ogni 6 ore | `download_silhouettes.php`, `download_photos.php`, `download_drawings.php`, `download_fdb_photos.php` | scaricano gli asset visivi mancanti per i modelli in database |
 | una volta a settimana | `download_opflags.php` | aggiorna i loghi operatore/forza aerea (VRS OperatorFlags) |
 | ogni notte alle 00:15 | `diary_build.php --publish --quiet` | calcola e pubblica automaticamente la voce di Diario di ieri |
@@ -195,7 +197,9 @@ Misure di sicurezza implementate:
 - Protezione CSRF su tutte le form (`require_csrf()`/`csrf_field()`)
 - Risposta generica e a tempo costante su login falliti (utente inesistente, password errata o account disattivo producono lo stesso esito, per non facilitare l'enumerazione utenti)
 - Limite sui tentativi di login per utente **e** per indirizzo IP
-- Ruolo e stato dell'account riletti dal database a ogni richiesta: disattivare o retrocedere un utente ha effetto immediato anche sulle sessioni già aperte
+- Ruolo e stato dell'account riletti dal database a ogni richiesta: disattivare o retrocedere un utente ha effetto immediato anche sulle sessioni già aperte; lo stesso vale per un cambio o reset della password, che chiude tutte le altre sessioni aperte con la vecchia (utile se un account è compromesso)
+- Redirect dopo il login e link di ritorno ("Annulla", `return=`) limitati alle pagine dell'applicazione (`safe_local_url()`): niente open redirect verso siti esterni né link `javascript:`
+- Gli endpoint chiamati dal frontend via `fetch()` rispondono `401`/`403` in JSON invece di reindirizzare al login: una scheda rimasta aperta dopo la scadenza della sessione smette di interrogare il server
 - Sessioni in directory dedicata, con garbage collection esplicita e scadenza dopo 12 ore di inattività (su Debian la pulizia di sistema non vedrebbe una `save_path` impostata a runtime)
 - Log di accessi e tentativi di login in `auth.db`, con conservazione limitata nel tempo (vedi le costanti `*_RETENTION_DAYS` in [`auth.php`](auth.php))
 - Modulo pubblico di richiesta accesso con honeypot anti-bot e limite per IP, soggetto ad approvazione manuale di un admin

@@ -251,12 +251,17 @@ function auth_bootstrap(): void {
  * Costo: una lettura per chiave primaria su una tabella di pochi record, del
  * tutto trascurabile rispetto al resto della pagina.
  */
+/** Impronta dell'hash della password salvata in sessione (mai l'hash stesso). */
+function password_fingerprint(string $passwordHash): string {
+    return substr(hash('sha256', $passwordHash), 0, 16);
+}
+
 function revalidate_session_user(): void {
     if (empty($_SESSION['user']['id'])) {
         return;
     }
     try {
-        $stmt = get_auth_db()->prepare("SELECT username, role, display_name, is_active FROM users WHERE id = ?");
+        $stmt = get_auth_db()->prepare("SELECT username, role, display_name, is_active, password_hash FROM users WHERE id = ?");
         $stmt->bindValue(1, (int)$_SESSION['user']['id'], SQLITE3_INTEGER);
         $row = $stmt->execute()->fetchArray(SQLITE3_ASSOC);
     } catch (Exception $e) {
@@ -265,6 +270,20 @@ function revalidate_session_user(): void {
 
     // Utente eliminato o disattivato: la sessione decade subito.
     if (!$row || !(int)$row['is_active']) {
+        $_SESSION['user'] = null;
+        unset($_SESSION['user']);
+        return;
+    }
+
+    // Password cambiata dopo il login (reset da admin, o cambio fatto da un'altra
+    // sessione): le sessioni aperte con la vecchia password decadono. Prima un
+    // reset per account compromesso lasciava attiva la sessione dell'intruso.
+    // Le sessioni nate prima di questo controllo non hanno l'impronta: la si
+    // registra ora, senza buttarle fuori.
+    $fp = password_fingerprint($row['password_hash']);
+    if (!isset($_SESSION['user']['pwfp'])) {
+        $_SESSION['user']['pwfp'] = $fp;
+    } elseif (!hash_equals($_SESSION['user']['pwfp'], $fp)) {
         $_SESSION['user'] = null;
         unset($_SESSION['user']);
         return;
@@ -353,6 +372,7 @@ function attempt_login(string $username, string $password): array {
         'username' => $row['username'],
         'role' => $row['role'],
         'display_name' => $row['display_name'] ?: $row['username'],
+        'pwfp' => password_fingerprint($row['password_hash']),
     ];
     $_SESSION['csrf_token'] = bin2hex(random_bytes(32));
 
@@ -384,6 +404,41 @@ function logout(): void {
  * rediretto al login (preservando la pagina di destinazione); se è loggato
  * ma con ruolo insufficiente riceve un 403.
  */
+/**
+ * Riduce un URL di ritorno (next/return) a una pagina locale dell'applicazione,
+ * altrimenti restituisce $default. Accetta "pagina.php", "pagina.php?query" e il
+ * percorso assoluto che require_role() ricava da REQUEST_URI ("/milair_ita/
+ * pagina.php?..."), di cui si tiene solo la parte dopo la cartella dell'app.
+ * Rifiuta tutto il resto: schemi (https:, javascript:), host ("//evil"),
+ * backslash e spazi/a capo, cioè open redirect e link "Annulla" eseguibili.
+ */
+function safe_local_url(?string $url, string $default = 'index.php'): string {
+    $url = trim((string)$url);
+    $appBase = rtrim(str_replace('\\', '/', dirname($_SERVER['SCRIPT_NAME'] ?? '/')), '/') . '/';
+    if (str_starts_with($url, $appBase)) {
+        $url = substr($url, strlen($appBase));
+    }
+    if (preg_match('#^[A-Za-z0-9_\-]+\.php(\?[^\s\\\\]*)?$#', $url)) {
+        return $url;
+    }
+    return $default;
+}
+
+/**
+ * Variante di require_role() per gli endpoint chiamati via fetch(): invece del
+ * redirect alla pagina di login (inutile per una risposta JSON) restituisce
+ * 401 (non autenticato) o 403 (ruolo insufficiente) con un corpo JSON.
+ */
+function require_role_json(string $minRole): void {
+    if ((ROLE_RANK[current_role()] ?? 0) >= (ROLE_RANK[$minRole] ?? 99)) {
+        return;
+    }
+    http_response_code(is_logged_in() ? 403 : 401);
+    header('Content-Type: application/json');
+    echo json_encode(['ok' => false, 'error' => is_logged_in() ? 'Permessi insufficienti.' : 'Sessione scaduta: effettua di nuovo l\'accesso.']);
+    exit;
+}
+
 function require_role(string $minRole): void {
     $requiredRank = ROLE_RANK[$minRole] ?? 99;
     $currentRank = ROLE_RANK[current_role()] ?? 0;
@@ -636,7 +691,7 @@ function render_alert_bell(): void {
 
     echo '<div class="alert-bell-wrap">';
     echo '<button type="button" id="alertBell" class="alert-bell" data-csrf="' . htmlspecialchars($csrf) . '" onclick="toggleAlertDropdown(event)">🔔';
-    echo '<span class="alert-badge" id="alertBadge"' . ($unread > 0 ? '' : ' style="display:none;"') . '>' . ($unread > 99 ? '99+' : $unread) . '</span>';
+    echo '<span class="alert-badge" id="alertBadge" data-count="' . (int)$unread . '"' . ($unread > 0 ? '' : ' style="display:none;"') . '>' . ($unread > 99 ? '99+' : $unread) . '</span>';
     echo '</button>';
 
     echo '<div class="alert-dropdown" id="alertDropdown">';
@@ -686,7 +741,11 @@ function render_alert_bell(): void {
         }
     });
 
+    // Conteggio reale tenuto a parte: il badge mostra "99+" e parseInt("99+")
+    // dava 99, quindi segnare letto un avviso con 250 non letti mostrava 98.
+    var unread = parseInt(badge.getAttribute('data-count') || badge.textContent, 10) || 0;
     function updateBadge(count) {
+        unread = count;
         if (count > 0) {
             badge.style.display = '';
             badge.textContent = count > 99 ? '99+' : count;
@@ -706,8 +765,7 @@ function render_alert_bell(): void {
                 var item = document.getElementById('alertItem' + id);
                 if (item) { item.classList.remove('unread'); }
                 if (btn) { btn.remove(); }
-                var current = parseInt(badge.textContent, 10) || 0;
-                updateBadge(Math.max(0, current - 1));
+                updateBadge(Math.max(0, unread - 1));
             }
         }).catch(function() {});
     };
@@ -726,10 +784,16 @@ function render_alert_bell(): void {
         }).catch(function() {});
     };
 
-    setInterval(function() {
-        fetch('alerts_count.php')
-            .then(function(r) { return r.json(); })
-            .then(function(data) { if (typeof data.count === 'number') { updateBadge(data.count); } })
+    // Sessione scaduta o ruolo revocato: alerts_count.php risponde 401/403 e il
+    // polling si ferma (prima seguiva un redirect a login.php ogni minuto, per
+    // ore, da ogni scheda dimenticata aperta: migliaia di righe nel log accessi).
+    var poll = setInterval(function() {
+        fetch('alerts_count.php', {redirect: 'error'})
+            .then(function(r) {
+                if (r.status === 401 || r.status === 403) { clearInterval(poll); return null; }
+                return r.ok ? r.json() : null;
+            })
+            .then(function(data) { if (data && typeof data.count === 'number') { updateBadge(data.count); } })
             .catch(function() {});
     }, 60000);
 })();
@@ -744,6 +808,24 @@ JS;
 // condiviso da tutto il team, non per singolo account.
 // ---------------------------------------------------------------------------
 
+/**
+ * Inizio del giorno $ymd (o del successivo, con $nextDay) in ora italiana,
+ * espresso in UTC nel formato di CURRENT_TIMESTAMP ("Y-m-d H:i:s"): serve per
+ * filtrare per data le tabelle di auth.db (alerts, access_log), le cui date sono
+ * in UTC mentre i campi "Dal/Al" della pagina sono giorni italiani. null se la
+ * data non è valida.
+ */
+function rome_day_start_utc(string $ymd, bool $nextDay = false): ?string {
+    $d = DateTime::createFromFormat('!Y-m-d', $ymd, new DateTimeZone('Europe/Rome'));
+    if (!$d || $d->format('Y-m-d') !== $ymd) {
+        return null;
+    }
+    if ($nextDay) {
+        $d->modify('+1 day');
+    }
+    return $d->setTimezone(new DateTimeZone('UTC'))->format('Y-m-d H:i:s');
+}
+
 /** Converte una data UTC (con o senza suffisso " UTC") in data/ora italiana leggibile — stessa logica di formatDateIt() già in uso in index.php/map.php. */
 function format_date_it(?string $utcString): string {
     if (empty($utcString)) {
@@ -755,7 +837,9 @@ function format_date_it(?string $utcString): string {
         $date->setTimezone(new DateTimeZone('Europe/Rome'));
         return $date->format('d/m/Y H:i:s');
     } catch (Exception $e) {
-        return htmlspecialchars($utcString);
+        // Testo grezzo: ogni chiamante lo passa già a htmlspecialchars() (o lo salva
+        // nel database); con l'escape anche qui "&" diventava "&amp;amp;" a video.
+        return $utcString;
     }
 }
 

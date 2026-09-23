@@ -5,64 +5,36 @@ auth_bootstrap();
 log_access();
 $canEdit = is_logged_in(); // Collaboratore o Admin: mostra le azioni di scrittura
 
+require_once __DIR__ . '/table_lib.php';
+
 $dbPath = __DIR__ . '/events.db';
 
-$dateFrom = $_GET['date_from'] ?? '';
-$dateTo   = $_GET['date_to']   ?? '';
-$hex      = $_GET['hex']       ?? '';
-$callsign = $_GET['callsign']  ?? '';
-$reg      = $_GET['reg']       ?? '';
-$model    = $_GET['model']     ?? '';
-$operator = strtoupper(trim($_GET['operator'] ?? ''));
-$note_search = $_GET['note']   ?? '';
-$rarity   = $_GET['rarity']    ?? '';
-$country  = $_GET['country']   ?? '';
-$category = $_GET['category']  ?? '';
-$markered = $_GET['markered']  ?? '';
-$manual   = $_GET['manual']    ?? '';
-$squawkFilter = $_GET['squawk_filter'] ?? '';
-$geofilter = $_GET['geofilter'] ?? '';   // Nuovo parametro
+// Parametri di filtro/ordinamento: letti e normalizzati da table_lib.php, la
+// stessa pipeline usata da export.php (pulsanti rapidi in ora italiana inclusi).
+$params = table_params($_GET);
+$dateFrom     = $params['date_from'];
+$dateTo       = $params['date_to'];
+$hex          = $params['hex'];
+$callsign     = $params['callsign'];
+$reg          = $params['reg'];
+$model        = $params['model'];
+$operator     = $params['operator'];
+$note_search  = $params['note'];
+$rarity       = $params['rarity'];
+$country      = $params['country'];
+$category     = $params['category'];
+$markered     = $params['markered'];
+$manual       = $params['manual'];
+$squawkFilter = $params['squawk_filter'];
+$geofilter    = $params['geofilter'];
+$sort         = $params['sort'];
+$order        = $params['order'];
 $dateView = ($_GET['dateview'] ?? '') === 'extended' ? 'extended' : 'compact';
 $page     = max(1, (int)($_GET['page'] ?? 1));
 $perPage  = 50;
 
-// Codici squawk di emergenza ufficiali (ICAO/DO-260B) e relativo significato, per
-// evidenziazione in tabella e tooltip di riferimento.
-$emergencySquawks = [
-    '7500' => 'Interferenza illecita (dirottamento)',
-    '7600' => 'Guasto radio / perdita comunicazioni',
-    '7700' => 'Emergenza generale',
-];
-
-// Gestione ordinamento
-$allowedSorts = [
-    'hex'                => 'hex',
-    'callsign'           => 'callsign',
-    'reg'                => 'reg',
-    'model_t'            => 'model_t',
-    'ident_first_seen'   => 'ident_first_seen',
-    'ident_last_seen'    => 'ident_last_seen',
-    'hex_first_seen'     => 'hex_first_seen',
-    'hex_last_seen'      => 'hex_last_seen',
-    'total_days'         => 'total_days',
-    'max_consecutive'    => 'max_consecutive_days',
-    'rarity'             => 'rarity',
-    'note'               => 'note',
-    'country'            => 'country',
-    'squawk'             => 'last_squawk',
-    'operator'           => 'operator'
-];
-$sort = $_GET['sort'] ?? 'ident_last_seen';
-if (!array_key_exists($sort, $allowedSorts)) {
-    $sort = 'ident_last_seen';
-}
-$order = ($_GET['order'] ?? 'desc') === 'asc' ? 'asc' : 'desc';
-
-if (isset($_GET['today']))     { $dateFrom = date('Y-m-d'); $dateTo = date('Y-m-d'); }
-if (isset($_GET['week']))      { $dateFrom = date('Y-m-d', strtotime('-7 days')); $dateTo = date('Y-m-d'); }
-if (isset($_GET['month']))     { $dateFrom = date('Y-m-d', strtotime('-30 days')); $dateTo = date('Y-m-d'); }
-if (isset($_GET['year']))      { $dateFrom = date('Y-m-d', strtotime('-1 year')); $dateTo = date('Y-m-d'); }
-if (isset($_GET['all']))       { $dateFrom = ''; $dateTo = ''; }
+// Codici squawk di emergenza (ICAO/DO-260B), per evidenziazione, tooltip e filtro.
+$emergencySquawks = EMERGENCY_SQUAWKS;
 
 $baseParams = array_intersect_key($_GET, array_flip(['hex','callsign','reg','model','operator','note','rarity','country','category','markered','manual','squawk_filter','geofilter','sort','order','dateview']));
 
@@ -174,58 +146,6 @@ function getFdbPhotoPath($hex) {
     return null;
 }
 /**
- * Classifica un codice tipo ICAO (model_t) in elicottero/aereo/drone.
- * Non esiste una vera categoria ADS-B salvata nel database (il campo 'category'
- * trasmesso dai transponder non viene ancora catturato dalla pipeline di raccolta),
- * quindi si deduce dal codice modello con una mappa statica, sullo stesso principio
- * già usato per la nazionalità (getCountryFromReg/getCountryFromCallsign).
- */
-function getAircraftCategory($modelT) {
-    static $helicopters = [
-        // Osservati nel database
-        'A139', 'A169', 'A119', 'AS32', 'H60', 'EH10', 'EC45', 'NH90', 'H47',
-        // Altri tipi elicottero comuni non ancora osservati, per copertura futura
-        'A109', 'A129', 'AW09', 'AW139', 'AW169', 'AW189', 'AH64', 'UH1', 'CH47',
-        'MI8', 'MI17', 'MI24', 'EC20', 'EC30', 'EC35', 'EC55', 'EC75', 'H145', 'H135',
-        'H175', 'B412', 'B429', 'B206', 'R44', 'R66', 'S70', 'S76', 'S92', 'GAZL', 'LYNX',
-    ];
-    static $drones = [
-        // Osservato nel database (Heron)
-        'HRON',
-        // Altri UAV militari comuni, per copertura futura
-        'HERM', 'MQ9', 'MQ1', 'MQ1P', 'RQ4', 'RQ7', 'RQ11', 'RQ170', 'WK1', 'TB2',
-    ];
-    $modelT = strtoupper(trim($modelT));
-    if ($modelT === '') {
-        return null; // non identificato
-    }
-    if (in_array($modelT, $helicopters, true)) {
-        return 'elicottero';
-    }
-    if (in_array($modelT, $drones, true)) {
-        return 'drone';
-    }
-    return 'aereo'; // fallback: tutti gli altri codici osservati sono ad ala fissa
-}
-
-/**
- * Converte la categoria emettitore ADS-B (trasmessa dal transponder stesso, standard
- * ICAO Annex 10 / DO-260B: A7=rotorcraft, B6=UAV, A1-A6=ala fissa per classe di peso)
- * in elicottero/aereo/drone. Fonte autoritativa: quando disponibile ha priorità sulla
- * classificazione statica dedotta dal codice modello (getAircraftCategory).
- */
-function mapAdsbCategory($code) {
-    $code = strtoupper(trim((string)$code));
-    if ($code === '') {
-        return null;
-    }
-    if ($code === 'A7') return 'elicottero';
-    if ($code === 'B6') return 'drone';
-    if (preg_match('/^A[1-6]$/', $code)) return 'aereo';
-    if (in_array($code, ['B1', 'B4'], true)) return 'aereo'; // aliante/ultraleggero: comunque ala fissa
-    return null; // altre categorie (palloni, paracadutisti, veicoli di terra...): non classificate
-}
-/**
  * Funzione per generare il link di ordinamento.
  */
 function sortLink($columnKey, $label, $currentSort, $currentOrder, $getParams) {
@@ -254,350 +174,26 @@ function formatDateIt($utcString) {
         return htmlspecialchars($utcString);
     }
 }
-
-/**
- * Confronta due righe per l'ordinamento in PHP.
- */
-function compareRows($a, $b, $sort, $order) {
-    $rarityOrder = ['Mythic'=>0, 'Legendary'=>1, 'Epic'=>2, 'Rare'=>3, 'Uncommon'=>4, 'Common'=>5];
-    $fieldMap = [
-        'hex' => 'hex',
-        'callsign' => 'callsign',
-        'reg' => 'reg',
-        'model_t' => 'model_t',
-        'ident_first_seen' => 'ident_first_seen',
-        'ident_last_seen' => 'ident_last_seen',
-        'hex_first_seen' => 'hex_first_seen',
-        'hex_last_seen' => 'hex_last_seen',
-        'total_days' => 'total_days',
-        'max_consecutive' => 'max_consecutive_days',
-        'rarity' => 'rarity',
-        'note' => 'note',
-        'country' => 'country',
-        'squawk' => 'last_squawk',
-        'operator' => 'operator'
-    ];
-    $key = $fieldMap[$sort] ?? 'ident_last_seen';
-    $va = $a[$key] ?? '';
-    $vb = $b[$key] ?? '';
-
-    if ($sort == 'rarity') {
-        $oa = $rarityOrder[$va] ?? 99;
-        $ob = $rarityOrder[$vb] ?? 99;
-        $cmp = $oa <=> $ob;
-    } elseif (in_array($sort, ['total_days', 'max_consecutive'])) {
-        $cmp = ((int)$va) <=> ((int)$vb);
-    } elseif (in_array($sort, ['ident_first_seen', 'ident_last_seen', 'hex_first_seen', 'hex_last_seen'])) {
-        $cmp = strcmp((string)$va, (string)$vb);
-    } else {
-        $cmp = strcasecmp((string)$va, (string)$vb);
-    }
-    return ($order === 'asc') ? $cmp : -$cmp;
-}
-
-/**
- * Verifica se un punto (lat, lon) è dentro un poligono GeoJSON.
- * Supporta FeatureCollection, Polygon e MultiPolygon.
- */
-function pointInGeoJSON($lat, $lon, $geojson) {
-    if ($lat === null || $lon === null || empty($geojson)) return false;
-    $data = json_decode($geojson, true);
-    if (!$data) return false;
-
-    $polygons = [];
-    if ($data['type'] === 'FeatureCollection') {
-        foreach ($data['features'] as $feature) {
-            $geom = $feature['geometry'];
-            if ($geom['type'] === 'Polygon') {
-                $polygons[] = $geom['coordinates'];
-            } elseif ($geom['type'] === 'MultiPolygon') {
-                foreach ($geom['coordinates'] as $poly) {
-                    $polygons[] = $poly;
-                }
-            }
-        }
-    } elseif ($data['type'] === 'Polygon') {
-        $polygons[] = $data['coordinates'];
-    } elseif ($data['type'] === 'MultiPolygon') {
-        foreach ($data['coordinates'] as $poly) {
-            $polygons[] = $poly;
-        }
-    }
-
-    foreach ($polygons as $poly) {
-        if (pointInPolygonRings($lat, $lon, $poly)) {
-            return true;
-        }
-    }
-    return false;
-}
-
-function pointInPolygonRings($lat, $lon, $rings) {
-    // anello esterno
-    if (!pointInRing($lat, $lon, $rings[0])) return false;
-    // buchi
-    for ($i = 1; $i < count($rings); $i++) {
-        if (pointInRing($lat, $lon, $rings[$i])) return false;
-    }
-    return true;
-}
-
-function pointInRing($lat, $lon, $ring) {
-    $inside = false;
-    $n = count($ring);
-    for ($i = 0, $j = $n - 1; $i < $n; $j = $i++) {
-        $xi = $ring[$i][1]; // lat
-        $yi = $ring[$i][0]; // lon
-        $xj = $ring[$j][1];
-        $yj = $ring[$j][0];
-
-        if (($yi > $lon) != ($yj > $lon) &&
-            ($lat < ($xj - $xi) * ($lon - $yi) / ($yj - $yi + 1e-9) + $xi)) {
-            $inside = !$inside;
-        }
-    }
-    return $inside;
-}
-
 try {
     $db = new SQLite3($dbPath, SQLITE3_OPEN_READONLY);
     $db->enableExceptions(true);
     $db->busyTimeout(5000);
 
-    // Regole personalizzate per la nazionalità
-    $customRules = [];
-    $resRules = $db->query("SELECT field, pattern, country_code FROM country_rules");
-    while ($rule = $resRules->fetchArray(SQLITE3_ASSOC)) {
-        $customRules[] = $rule;
+    $data = table_load($db, $params);
+    $filtered           = $data['rows'];
+    $availableCountries = $data['availableCountries'];
+    $rowRules           = $data['rowRules'];
+    $manualOverrides    = $data['manualOverrides'];
+    $favoritesHex       = $data['favoritesHex'];
+
+    $totalRows  = count($filtered);
+    $totalPages = (int) ceil($totalRows / $perPage);
+    // Una pagina oltre l'ultima (link vecchio, filtri cambiati) mostrava una
+    // tabella vuota senza spiegazioni: si riporta all'ultima pagina esistente.
+    if ($totalPages > 0 && $page > $totalPages) {
+        $page = $totalPages;
     }
-
-    // Regole di evidenziazione righe
-    $rowRules = [];
-    $resRowRules = $db->query("SELECT field, pattern, bg_color, bold FROM row_rules");
-    while ($rule = $resRowRules->fetchArray(SQLITE3_ASSOC)) {
-        $rowRules[] = $rule;
-    }
-
-    // Regole di annotazione automatica
-    $noteRules = [];
-    $resNoteRules = $db->query("SELECT field, pattern, note FROM note_rules");
-    while ($rule = $resNoteRules->fetchArray(SQLITE3_ASSOC)) {
-        $noteRules[] = $rule;
-    }
-
-    // Regole di contrassegno automatico
-    $markerRules = [];
-    $resMarkerRules = $db->query("SELECT field, pattern, emoji FROM marker_rules");
-    while ($rule = $resMarkerRules->fetchArray(SQLITE3_ASSOC)) {
-        $markerRules[] = $rule;
-    }
-
-    // Contrassegni manuali
-    $markersData = [];
-    $resMarkers = $db->query("SELECT hex, emoji FROM markers");
-    while ($m = $resMarkers->fetchArray(SQLITE3_ASSOC)) {
-        $markersData[$m['hex']] = $m['emoji'];
-    }
-
-    // Correzioni manuali dell'analista (reg/callsign/model_t) per contatti identificati
-    // solo parzialmente: hanno precedenza sui dati grezzi ricevuti dal transponder.
-    $manualOverrides = [];
-    $overridesTableExists = $db->querySingle("SELECT name FROM sqlite_master WHERE type='table' AND name='manual_overrides'");
-    if ($overridesTableExists) {
-        $resOverrides = $db->query("SELECT hex, reg, callsign, model_t FROM manual_overrides");
-        while ($o = $resOverrides->fetchArray(SQLITE3_ASSOC)) {
-            $manualOverrides[$o['hex']] = $o;
-        }
-    }
-
-    // Preferiti
-    $favoritesHex = [];
-    $resFav = $db->query("SELECT hex FROM favorites");
-    while ($fav = $resFav->fetchArray(SQLITE3_ASSOC)) {
-        $favoritesHex[] = $fav['hex'];
-    }
-
-    // Carica profilo geografico se selezionato
-    $geoJSON = null;
-    if ($geofilter) {
-        $stmt = $db->prepare("SELECT geojson FROM geo_profiles WHERE id = ?");
-        $stmt->bindValue(1, (int)$geofilter);
-        $res = $stmt->execute()->fetchArray(SQLITE3_ASSOC);
-        if ($res) {
-            $geoJSON = $res['geojson'];
-        }
-    }
-
-    $sql = "
-        SELECT ai.hex, ai.callsign, ai.reg, ai.model_t,
-               ai.first_seen_utc AS ident_first_seen, ai.last_seen_utc AS ident_last_seen,
-               a.first_seen_utc AS hex_first_seen, a.last_seen_utc AS hex_last_seen,
-               a.seen_count AS total_days, a.max_consecutive_days,
-               a.lat AS last_lat, a.lon AS last_lon,
-               a.category AS transponder_category, a.squawk AS last_squawk,
-               r.rarity, n.note
-        FROM aircraft_identity ai
-        JOIN aircraft a ON ai.hex = a.hex
-        LEFT JOIN rarity_cache r ON a.hex = r.hex
-        LEFT JOIN notes n ON a.hex = n.hex
-    ";
-    $stmt = $db->prepare($sql);
-    $result = $stmt->execute();
-
-    $allData = [];
-    $availableCountries = [];
-    while ($row = $result->fetchArray(SQLITE3_ASSOC)) {
-        // Applica eventuali correzioni manuali (solo sui campi effettivamente impostati)
-        $row['has_override'] = false;
-        if (isset($manualOverrides[$row['hex']])) {
-            $ov = $manualOverrides[$row['hex']];
-            foreach (['reg', 'callsign', 'model_t'] as $f) {
-                if (!empty($ov[$f])) {
-                    $row[$f] = $ov[$f];
-                    $row['has_override'] = true;
-                }
-            }
-        }
-
-        $row['country'] = getCountryCode($row['hex'], $row['reg'], $row['callsign'], $customRules);
-        $row['category'] = mapAdsbCategory($row['transponder_category'] ?? null) ?? getAircraftCategory($row['model_t']);
-        $row['last_squawk'] = trim($row['last_squawk'] ?? '');
-        $row['squawk_is_emergency'] = isset($emergencySquawks[$row['last_squawk']]);
-
-        // Note automatiche
-        $autoNotes = [];
-        foreach ($noteRules as $rule) {
-            $fieldValue = null;
-            if ($rule['field'] === 'hex') $fieldValue = strtoupper(trim($row['hex']));
-            elseif ($rule['field'] === 'callsign') $fieldValue = strtoupper(trim($row['callsign'] ?? ''));
-            elseif ($rule['field'] === 'reg') $fieldValue = strtoupper(trim($row['reg'] ?? ''));
-            elseif ($rule['field'] === 'model_t') $fieldValue = strtoupper(trim($row['model_t'] ?? ''));
-            elseif ($rule['field'] === 'squawk') $fieldValue = strtoupper(trim($row['last_squawk'] ?? ''));
-
-            if ($fieldValue !== null && patternMatch($fieldValue, $rule['pattern'])) {
-                $autoNotes[] = $rule['note'];
-            }
-        }
-
-        $combinedNote = $row['note'];
-        if (!empty($autoNotes)) {
-            $autoText = implode(' | ', $autoNotes);
-            if (!empty($combinedNote)) {
-                $combinedNote .= ' | [auto] ' . $autoText;
-            } else {
-                $combinedNote = '[auto] ' . $autoText;
-            }
-        }
-        $row['combined_note'] = $combinedNote;
-
-        // Contrassegno automatico
-        $autoMarker = null;
-        foreach ($markerRules as $rule) {
-            $fieldValue = null;
-            if ($rule['field'] === 'hex') $fieldValue = strtoupper(trim($row['hex']));
-            elseif ($rule['field'] === 'callsign') $fieldValue = strtoupper(trim($row['callsign'] ?? ''));
-            elseif ($rule['field'] === 'reg') $fieldValue = strtoupper(trim($row['reg'] ?? ''));
-            elseif ($rule['field'] === 'model_t') $fieldValue = strtoupper(trim($row['model_t'] ?? ''));
-            elseif ($rule['field'] === 'squawk') $fieldValue = strtoupper(trim($row['last_squawk'] ?? ''));
-
-            if ($fieldValue !== null && patternMatch($fieldValue, $rule['pattern'])) {
-                $autoMarker = $rule['emoji'];
-                break;
-            }
-        }
-        $row['marker_emoji'] = $markersData[$row['hex']] ?? $autoMarker;
-        $row['operator'] = operatorFromCallsign($row['callsign'] ?? '');
-
-        // Nuovo contatto del giorno
-        $today = date('Y-m-d');
-        $firstDay = substr($row['hex_first_seen'], 0, 10);
-        $row['is_new_today'] = ($firstDay === $today);
-
-        $allData[] = $row;
-        if (!empty($row['country'])) {
-            $availableCountries[$row['country']] = $row['country'];
-        }
-    }
-    ksort($availableCountries);
-
-    // Filtri inclusi geofilter
-    $filtered = array_filter($allData, function($r) use ($dateFrom, $dateTo, $hex, $callsign, $reg, $model, $operator, $note_search, $rarity, $country, $category, $markered, $manual, $squawkFilter, $geoJSON) {
-        if ($dateFrom && strtotime($r['ident_last_seen']) < strtotime($dateFrom . ' 00:00:00')) return false;
-        if ($dateTo && strtotime($r['ident_last_seen']) > strtotime($dateTo . ' 23:59:59')) return false;
-
-        if ($hex) {
-            if (strpos($hex, '*') !== false) {
-                if (!patternMatch($r['hex'], $hex)) return false;
-            } else {
-                if (stripos($r['hex'], $hex) !== 0) return false;
-            }
-        }
-
-        if ($callsign) {
-            if (strpos($callsign, '*') !== false) {
-                if (!patternMatch($r['callsign'], $callsign)) return false;
-            } else {
-                if (stripos($r['callsign'], $callsign) !== 0) return false;
-            }
-        }
-
-        if ($reg) {
-            if (strpos($reg, '*') !== false) {
-                if (!patternMatch($r['reg'], $reg)) return false;
-            } else {
-                if (stripos($r['reg'], $reg) !== 0) return false;
-            }
-        }
-
-        if ($model) {
-            if (strpos($model, '*') !== false) {
-                if (!patternMatch($r['model_t'], $model)) return false;
-            } else {
-                if (stripos($r['model_t'], $model) === false) return false;
-            }
-        }
-
-        if ($operator && ($r['operator'] ?? '') !== $operator) return false;
-
-        if ($note_search && stripos($r['combined_note'] ?? '', $note_search) === false) return false;
-
-        if ($rarity && $r['rarity'] !== $rarity) return false;
-        if ($country && $r['country'] !== $country) return false;
-        if ($category) {
-            if ($category === 'none') {
-                if ($r['category'] !== null) return false;
-            } elseif ($r['category'] !== $category) {
-                return false;
-            }
-        }
-        if ($markered === 'watch') {
-            if (($r['marker_emoji'] ?? '') !== '❓') return false;
-        } elseif ($markered && empty($r['marker_emoji'])) {
-            return false;
-        }
-        if ($manual && empty($r['has_override'])) return false;
-        if ($squawkFilter) {
-            if ($squawkFilter === 'emergency') {
-                if (empty($r['squawk_is_emergency'])) return false;
-            } elseif (($r['last_squawk'] ?? '') !== $squawkFilter) {
-                return false;
-            }
-        }
-
-        if ($geoJSON) {
-            if (!pointInGeoJSON($r['last_lat'], $r['last_lon'], $geoJSON)) return false;
-        }
-
-        return true;
-    });
-
-    usort($filtered, function($a, $b) use ($sort, $order) {
-        return compareRows($a, $b, $sort, $order);
-    });
-
-    $totalRows = count($filtered);
-    $totalPages = ceil($totalRows / $perPage);
-    $offset = ($page - 1) * $perPage;
+    $offset   = ($page - 1) * $perPage;
     $rowsPage = array_slice($filtered, $offset, $perPage);
 } catch (Exception $e) {
     error_log('index.php: ' . $e->getMessage());
@@ -792,6 +388,12 @@ try {
 
     <div class="filter-bar">
         <form method="get">
+            <?php /* Ordinamento e vista date scelti dall'utente vanno conservati
+                     quando si cambia un filtro: prima "Cerca" li riportava ai
+                     valori predefiniti. */ ?>
+            <input type="hidden" name="sort" value="<?= htmlspecialchars($sort) ?>">
+            <input type="hidden" name="order" value="<?= htmlspecialchars($order) ?>">
+            <?php if ($dateView === 'extended'): ?><input type="hidden" name="dateview" value="extended"><?php endif; ?>
             <label>Data ultimo avvistamento da: <input type="date" name="date_from" value="<?= htmlspecialchars($dateFrom) ?>"></label>
             <label>a: <input type="date" name="date_to" value="<?= htmlspecialchars($dateTo) ?>"></label>
             <label>HEX: <input type="text" name="hex" placeholder="es. 4B..." value="<?= htmlspecialchars($hex) ?>"></label>
@@ -985,6 +587,9 @@ try {
                        data-reg="<?= htmlspecialchars($row['reg'] ?? '') ?>"
                        data-callsign="<?= htmlspecialchars($row['callsign'] ?? '') ?>"
                        data-model="<?= htmlspecialchars($row['model_t'] ?? '') ?>"
+                       data-ovr-reg="<?= htmlspecialchars($manualOverrides[$row['hex']]['reg'] ?? '') ?>"
+                       data-ovr-callsign="<?= htmlspecialchars($manualOverrides[$row['hex']]['callsign'] ?? '') ?>"
+                       data-ovr-model="<?= htmlspecialchars($manualOverrides[$row['hex']]['model_t'] ?? '') ?>"
                        data-has-override="<?= $row['has_override'] ? '1' : '0' ?>"
                        title="Correggi manualmente identità/foto" class="copy-btn">
                        <?= $row['has_override'] ? '🛠️' : '✏️' ?>
@@ -1127,7 +732,7 @@ try {
                         </span>
                     <?php endif; ?>
                     <?php if ($canEdit): ?>
-                        <a href="edit_note.php?hex=<?= urlencode($row['hex']) ?>" title="Modifica nota" style="font-size:0.8em;">✏️</a>
+                        <a href="edit_note.php?hex=<?= urlencode($row['hex']) ?>&amp;return=<?= urlencode('index.php' . (($_SERVER['QUERY_STRING'] ?? '') !== '' ? '?' . $_SERVER['QUERY_STRING'] : '')) ?>" title="Modifica nota" style="font-size:0.8em;">✏️</a>
                     <?php endif; ?>
                 </td>
                 <td>
@@ -1141,7 +746,7 @@ try {
                 </td>
                 <td>
                     <?php if ($canEdit): ?>
-                        <a href="#" onclick="toggleFavorite('<?= htmlspecialchars($row['hex'], ENT_QUOTES) ?>', <?= $isFav ? 'true' : 'false' ?>, this); return false;" title="<?= $isFav ? 'Rimuovi dai preferiti' : 'Aggiungi ai preferiti' ?>">
+                        <a href="#" class="fav-link" data-hex="<?= htmlspecialchars($row['hex']) ?>" onclick="toggleFavorite('<?= htmlspecialchars($row['hex'], ENT_QUOTES) ?>', <?= $isFav ? 'true' : 'false' ?>, this); return false;" title="<?= $isFav ? 'Rimuovi dai preferiti' : 'Aggiungi ai preferiti' ?>">
                             <?= $isFav ? '⭐' : '☆' ?>
                         </a>
                     <?php elseif ($isFav): ?>
@@ -1154,9 +759,14 @@ try {
     </table>
     </div>
 
+    <?php if ($totalRows === 0): ?>
+        <p style="padding:12px;color:#6c757d;">Nessun contatto corrisponde ai filtri selezionati.</p>
+    <?php endif; ?>
+
     <div class="pagination">
+        <span style="color:#6c757d;margin-right:8px;"><?= number_format($totalRows, 0, ',', '.') ?> righe</span>
         <?php for ($i = 1; $i <= $totalPages; $i++): ?>
-            <a href="?<?= http_build_query(array_merge($_GET, ['page' => $i])) ?>"><?= $i ?></a>
+            <a href="?<?= http_build_query(array_merge($_GET, ['page' => $i])) ?>"<?= $i === $page ? ' style="font-weight:bold;"' : '' ?>><?= $i ?></a>
         <?php endfor; ?>
     </div>
 
@@ -1263,7 +873,10 @@ try {
             .then(r => r.json())
             .then(data => {
                 if (data.ok) {
-                    btn.textContent = emoji === '' ? '🔖' : emoji;
+                    // Tutte le righe di quell'hex (una per identità callsign/reg), non
+                    // solo quella cliccata: prima le altre restavano col vecchio simbolo.
+                    document.querySelectorAll('.mark-btn[data-hex="' + CSS.escape(hex) + '"]')
+                        .forEach(b => { b.textContent = emoji === '' ? '🔖' : emoji; });
                 } else {
                     alert('Errore: ' + (data.error || 'operazione non riuscita'));
                 }
@@ -1292,9 +905,13 @@ try {
             .then(r => r.json())
             .then(data => {
                 if (data.ok) {
-                    link.textContent = isFav ? '☆' : '⭐';
-                    link.setAttribute('onclick', "toggleFavorite('" + hex + "', " + (!isFav) + ", this); return false;");
-                    link.title = isFav ? 'Aggiungi ai preferiti' : 'Rimuovi dai preferiti';
+                    // Come per i contrassegni: aggiorna ogni riga dello stesso hex.
+                    const links = document.querySelectorAll('.fav-link[data-hex="' + CSS.escape(hex) + '"]');
+                    (links.length ? links : [link]).forEach(l => {
+                        l.textContent = isFav ? '☆' : '⭐';
+                        l.setAttribute('onclick', "toggleFavorite('" + hex + "', " + (!isFav) + ", this); return false;");
+                        l.title = isFav ? 'Aggiungi ai preferiti' : 'Rimuovi dai preferiti';
+                    });
                 } else {
                     alert('Errore: ' + (data.error || 'operazione non riuscita'));
                 }
@@ -1312,9 +929,18 @@ try {
         identityCurrentModel = link.dataset.model || '';
         document.getElementById('identityForm').reset();
         document.getElementById('identityModalHex').textContent = identityCurrentHex;
-        document.getElementById('identityReg').value = link.dataset.reg || '';
-        document.getElementById('identityCallsign').value = link.dataset.callsign || '';
-        document.getElementById('identityModel').value = identityCurrentModel;
+        // I campi mostrano solo le correzioni GIÀ salvate; i dati ricevuti via
+        // ADS-B compaiono come suggerimento (placeholder). Precompilarli con i
+        // valori osservati faceva sì che un semplice caricamento di foto li
+        // salvasse come correzione manuale, congelandoli per sempre.
+        const setField = (id, ovr, observed) => {
+            const el = document.getElementById(id);
+            el.value = ovr || '';
+            el.placeholder = observed ? 'attuale: ' + observed : '';
+        };
+        setField('identityReg', link.dataset.ovrReg, link.dataset.reg);
+        setField('identityCallsign', link.dataset.ovrCallsign, link.dataset.callsign);
+        setField('identityModel', link.dataset.ovrModel, identityCurrentModel);
         document.getElementById('identityClearBtn').style.display = link.dataset.hasOverride === '1' ? 'inline-block' : 'none';
         document.getElementById('identityModalStatus').textContent = '';
         document.getElementById('identityModalStatus').className = 'modal-status';

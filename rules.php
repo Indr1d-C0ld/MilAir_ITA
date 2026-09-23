@@ -72,7 +72,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     require_csrf();
     if (isset($_POST['add_country'])) {
         $field = $_POST['field'] ?? '';
-        $pattern = trim($_POST['pattern'] ?? '');
+        $pattern = normalize_rule_pattern($field, $_POST['pattern'] ?? '') ?? '';
         $country_code = strtoupper(trim($_POST['country_code'] ?? ''));
         $description = trim($_POST['country_description'] ?? '');
         if (in_array($field, $allowedFields['country_rules']) && $pattern !== '' && $country_code !== '') {
@@ -86,7 +86,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     } elseif (isset($_POST['edit_country'])) {
         $id = (int)($_POST['id'] ?? 0);
         $field = $_POST['field'] ?? '';
-        $pattern = trim($_POST['pattern'] ?? '');
+        $pattern = normalize_rule_pattern($field, $_POST['pattern'] ?? '') ?? '';
         $country_code = strtoupper(trim($_POST['country_code'] ?? ''));
         $description = trim($_POST['country_description'] ?? '');
         if ($id > 0 && in_array($field, $allowedFields['country_rules']) && $pattern !== '' && $country_code !== '') {
@@ -103,15 +103,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $db->exec("DELETE FROM country_rules WHERE id = " . $id);
     } elseif (isset($_POST['add_row'])) {
         $field = $_POST['row_field'] ?? '';
-        $pattern = trim($_POST['row_pattern'] ?? '');
-        $bg_color = trim($_POST['bg_color'] ?? '');
+        $pattern = normalize_rule_pattern($field, $_POST['row_pattern'] ?? '') ?? '';
+        $bg_color = isset($_POST['no_bg']) ? null : normalize_rule_color($_POST['bg_color'] ?? '');
         $bold = isset($_POST['bold']) ? 1 : 0;
         $description = trim($_POST['row_description'] ?? '');
         if (in_array($field, $allowedFields['row_rules']) && $pattern !== '') {
             $stmt = $db->prepare("INSERT INTO row_rules (field, pattern, bg_color, bold, description) VALUES (?, ?, ?, ?, ?)");
             $stmt->bindValue(1, $field);
             $stmt->bindValue(2, $pattern);
-            $stmt->bindValue(3, $bg_color ?: null);
+            $stmt->bindValue(3, $bg_color);
             $stmt->bindValue(4, $bold);
             $stmt->bindValue(5, $description !== '' ? $description : null);
             $stmt->execute();
@@ -119,15 +119,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     } elseif (isset($_POST['edit_row'])) {
         $id = (int)($_POST['id'] ?? 0);
         $field = $_POST['row_field'] ?? '';
-        $pattern = trim($_POST['row_pattern'] ?? '');
-        $bg_color = trim($_POST['bg_color'] ?? '');
+        $pattern = normalize_rule_pattern($field, $_POST['row_pattern'] ?? '') ?? '';
+        $bg_color = isset($_POST['no_bg']) ? null : normalize_rule_color($_POST['bg_color'] ?? '');
         $bold = isset($_POST['bold']) ? 1 : 0;
         $description = trim($_POST['row_description'] ?? '');
         if ($id > 0 && in_array($field, $allowedFields['row_rules']) && $pattern !== '') {
             $stmt = $db->prepare("UPDATE row_rules SET field = ?, pattern = ?, bg_color = ?, bold = ?, description = ? WHERE id = ?");
             $stmt->bindValue(1, $field);
             $stmt->bindValue(2, $pattern);
-            $stmt->bindValue(3, $bg_color ?: null);
+            $stmt->bindValue(3, $bg_color);
             $stmt->bindValue(4, $bold);
             $stmt->bindValue(5, $description !== '' ? $description : null);
             $stmt->bindValue(6, $id);
@@ -138,7 +138,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $db->exec("DELETE FROM row_rules WHERE id = " . $id);
     } elseif (isset($_POST['add_note'])) {
         $field = $_POST['note_field'] ?? '';
-        $pattern = trim($_POST['note_pattern'] ?? '');
+        $pattern = normalize_rule_pattern($field, $_POST['note_pattern'] ?? '') ?? '';
         $note = trim($_POST['note_text'] ?? '');
         $description = trim($_POST['note_description'] ?? '');
         if (in_array($field, $allowedFields['note_rules']) && $pattern !== '' && $note !== '') {
@@ -152,7 +152,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     } elseif (isset($_POST['edit_note'])) {
         $id = (int)($_POST['id'] ?? 0);
         $field = $_POST['note_field'] ?? '';
-        $pattern = trim($_POST['note_pattern'] ?? '');
+        $pattern = normalize_rule_pattern($field, $_POST['note_pattern'] ?? '') ?? '';
         $note = trim($_POST['note_text'] ?? '');
         $description = trim($_POST['note_description'] ?? '');
         if ($id > 0 && in_array($field, $allowedFields['note_rules']) && $pattern !== '' && $note !== '') {
@@ -169,7 +169,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $db->exec("DELETE FROM note_rules WHERE id = " . $id);
     } elseif (isset($_POST['add_marker'])) {
         $field = $_POST['marker_field'] ?? '';
-        $pattern = trim($_POST['marker_pattern'] ?? '');
+        $pattern = normalize_rule_pattern($field, $_POST['marker_pattern'] ?? '') ?? '';
         $emoji = trim($_POST['marker_emoji'] ?? '');
         $description = trim($_POST['marker_description'] ?? '');
         if (in_array($field, $allowedFields['marker_rules']) && $pattern !== '' && $emoji !== '') {
@@ -183,7 +183,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     } elseif (isset($_POST['edit_marker'])) {
         $id = (int)($_POST['id'] ?? 0);
         $field = $_POST['marker_field'] ?? '';
-        $pattern = trim($_POST['marker_pattern'] ?? '');
+        $pattern = normalize_rule_pattern($field, $_POST['marker_pattern'] ?? '') ?? '';
         $emoji = trim($_POST['marker_emoji'] ?? '');
         $description = trim($_POST['marker_description'] ?? '');
         if ($id > 0 && in_array($field, $allowedFields['marker_rules']) && $pattern !== '' && $emoji !== '') {
@@ -200,7 +200,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $db->exec("DELETE FROM marker_rules WHERE id = " . $id);
     } elseif (isset($_POST['add_alert'])) {
         $field = $_POST['alert_field'] ?? '';
-        $pattern = trim($_POST['alert_pattern'] ?? '');
+        $pattern = normalize_rule_pattern($field, $_POST['alert_pattern'] ?? '') ?? '';
         $description = trim($_POST['alert_description'] ?? '');
         if (in_array($field, $allowedFields['alert_rules']) && $pattern !== '') {
             $stmt = $db->prepare("INSERT INTO alert_rules (field, pattern, description) VALUES (?, ?, ?)");
@@ -212,7 +212,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     } elseif (isset($_POST['edit_alert'])) {
         $id = (int)($_POST['id'] ?? 0);
         $field = $_POST['alert_field'] ?? '';
-        $pattern = trim($_POST['alert_pattern'] ?? '');
+        $pattern = normalize_rule_pattern($field, $_POST['alert_pattern'] ?? '') ?? '';
         $description = trim($_POST['alert_description'] ?? '');
         if ($id > 0 && in_array($field, $allowedFields['alert_rules']) && $pattern !== '') {
             $stmt = $db->prepare("UPDATE alert_rules SET field = ?, pattern = ?, description = ? WHERE id = ?");
@@ -257,8 +257,20 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                                 continue;
                             }
                             $valid = true;
+                            foreach (array_merge($spec['required'], $spec['optional']) as $col) {
+                                // Un array/oggetto al posto di un valore faceva fallire bindValue
+                                // e annullava l'intero import (ROLLBACK di tutte le regole).
+                                if (isset($entry[$col]) && !is_scalar($entry[$col])) { $valid = false; break; }
+                            }
+                            // Stesse normalizzazioni dell'inserimento manuale.
+                            if ($valid) {
+                                $entry['pattern'] = normalize_rule_pattern($entry['field'], $entry['pattern'] ?? '') ?? '';
+                                if (isset($entry['country_code'])) $entry['country_code'] = strtoupper(trim((string)$entry['country_code']));
+                                if (array_key_exists('bg_color', $entry)) $entry['bg_color'] = normalize_rule_color($entry['bg_color']);
+                                if (isset($entry['bold'])) $entry['bold'] = $entry['bold'] ? 1 : 0;
+                            }
                             foreach ($spec['required'] as $col) {
-                                if (!isset($entry[$col]) || $entry[$col] === '') { $valid = false; break; }
+                                if (!$valid || !isset($entry[$col]) || trim((string)$entry[$col]) === '') { $valid = false; break; }
                             }
                             if (!$valid) { $skipped++; continue; }
 
@@ -603,6 +615,7 @@ function getFlagEmoji($code) {
         </label>
         <label>Prefisso/Pattern/Intervallo (es. 33* o *MM*): <input type="text" name="row_pattern" required></label>
         <label>Colore sfondo: <input type="color" name="bg_color" value="#ffcc00" class="color-picker"></label>
+        <label title="Per una regola che rende solo il grassetto: un selettore colore invia sempre un valore">Nessun colore: <input type="checkbox" name="no_bg" value="1"></label>
         <label>Grassetto: <input type="checkbox" name="bold" value="1"></label>
         <label>Annotazione (opzionale): <input type="text" name="row_description"></label>
         <button type="submit">Aggiungi</button>
@@ -651,6 +664,9 @@ function getFlagEmoji($code) {
                             </label>
                             <label>Colore sfondo:
                                 <input type="color" name="bg_color" value="<?= htmlspecialchars($rule['bg_color'] ?: '#ffcc00') ?>" class="color-picker">
+                            </label>
+                            <label>Nessun colore:
+                                <input type="checkbox" name="no_bg" value="1" <?= empty($rule['bg_color']) ? 'checked' : '' ?>>
                             </label>
                             <label>Grassetto:
                                 <input type="checkbox" name="bold" value="1" <?= $rule['bold'] ? 'checked' : '' ?>>

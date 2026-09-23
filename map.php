@@ -22,11 +22,7 @@ function formatDateIt($utcString) {
     }
 }
 // Regole personalizzate per la nazionalità (stesse usate in index.php)
-$customRules = [];
-$resRules = $db->query("SELECT field, pattern, country_code FROM country_rules");
-while ($rule = $resRules->fetchArray(SQLITE3_ASSOC)) {
-    $customRules[] = $rule;
-}
+$customRules = loadCountryRules($db); // geo_lib.php: unica fonte, ordine = precedenza
 
 // Legge tutti i marker (limitati a 5000 per performance)
 $res = $db->query("SELECT a.hex, a.callsign, a.reg, a.model_t, a.lat, a.lon, a.alt_ft, a.gs_kt, a.squawk, a.last_seen_utc, a.ground,
@@ -51,6 +47,9 @@ while ($row = $res->fetchArray(SQLITE3_ASSOC)) {
 
     // Data formattata in italiano e ora italiana (ULTIMO avvistamento)
     $row['last_seen_it'] = formatDateIt($row['last_seen_utc']);
+    // Istante in millisecondi per i filtri JS: "2026-09-18 09:44:07 UTC" non è un
+    // formato che tutti i browser sanno leggere con new Date() (Safari no).
+    $row['last_seen_ms'] = (strtotime($row['last_seen_utc']) ?: 0) * 1000;
 
     // Aggiungi silhouette se esiste
     $safeType = preg_replace('/[^A-Za-z0-9_\-]/', '', strtoupper(trim($row['model_t'] ?? '')));
@@ -167,6 +166,7 @@ $notamAreasJson = json_encode($notamAreas);
             flex-wrap: wrap;
         }
         .time-controls label { font-weight: 500; }
+        .period-status { font-size: 0.9em; color: #495057; }
         .time-controls select, .time-controls input[type="range"] {
             vertical-align: middle;
         }
@@ -334,6 +334,7 @@ $notamAreasJson = json_encode($notamAreas);
             <input type="range" id="timeSlider" min="1" max="3650" value="7" style="width: 200px;">
             <span id="sliderValue">7</span>
         </label>
+        <span id="periodStatus" class="period-status"></span>
         <label>Colora per:
             <select id="colorMode">
                 <option value="none">Nessuna (icona standard)</option>
@@ -525,8 +526,25 @@ $notamAreasJson = json_encode($notamAreas);
         }
         // ----------------------------------------------------------------
 
+        // Mezzanotte di oggi in ora italiana, qualunque sia il fuso del browser: il
+        // pulsante "Oggi" copre il giorno di calendario, come nella tabella (prima
+        // erano le ultime 24 ore, quindi anche mezza giornata di ieri).
+        function romeMidnight() {
+            const now = new Date();
+            const p = {};
+            new Intl.DateTimeFormat('en-GB', {
+                timeZone: 'Europe/Rome', year: 'numeric', month: '2-digit', day: '2-digit',
+                hour: '2-digit', minute: '2-digit', second: '2-digit', hourCycle: 'h23'
+            }).formatToParts(now).forEach(x => { p[x.type] = x.value; });
+            const romeWall = Date.UTC(+p.year, +p.month - 1, +p.day, +p.hour, +p.minute, +p.second);
+            const offset = romeWall - Math.floor(now.getTime() / 1000) * 1000;
+            return new Date(Date.UTC(+p.year, +p.month - 1, +p.day) - offset);
+        }
+        let todayMode = false; // attivato dal pulsante "Oggi", annullato da slider/unità
+
         // Funzione per calcolare il timestamp di cutoff
         function getCutoff(unit, value) {
+            if (todayMode) return romeMidnight();
             const now = new Date();
             switch(unit) {
                 case 'hours':
@@ -552,6 +570,19 @@ $notamAreasJson = json_encode($notamAreas);
         // nascondendo tutti gli altri — attivato/disattivato dal pulsante "Isola"
         // nel pannello della traccia storica.
         let isolateTrackHex = null;
+        // Numero progressivo dell'ultima richiesta di traccia: trascinando lo slider
+        // partono molte richieste e le risposte possono arrivare fuori ordine; solo
+        // l'ultima va disegnata (prima si sommavano, con punti duplicati o di un
+        // periodo diverso da quello selezionato).
+        let trackRequestSeq = 0;
+
+        // Data/ora italiana da una data UTC del database ("2026-09-18 09:44:07 UTC").
+        function formatUtcIt(s) {
+            const m = /^(\d{4})-(\d{2})-(\d{2}) (\d{2}):(\d{2}):(\d{2})/.exec(s || '');
+            if (!m) return s || '';
+            const d = new Date(Date.UTC(+m[1], +m[2] - 1, +m[3], +m[4], +m[5], +m[6]));
+            return d.toLocaleString('it-IT', {timeZone: 'Europe/Rome'});
+        }
 
         function updateIsolateButtonLabel() {
             const btn = document.getElementById('isolateTrackBtn');
@@ -567,6 +598,7 @@ $notamAreasJson = json_encode($notamAreas);
         }
 
         function hideTrack() {
+            trackRequestSeq++; // scarta eventuali risposte ancora in viaggio
             trackLayerGroup.clearLayers();
             document.getElementById('trackInfo').style.display = 'none';
             activeTrackHex = null;
@@ -584,19 +616,30 @@ $notamAreasJson = json_encode($notamAreas);
             activeTrackHex = hex;
             activeTrackLabel = label;
             updateIsolateButtonLabel();
-            trackLayerGroup.clearLayers();
             const unit = document.getElementById('timeUnit').value;
             const value = parseInt(document.getElementById('sliderValue').textContent, 10);
             const cutoff = getCutoff(unit, value);
+            const seq = ++trackRequestSeq;
 
             fetch('track.php?hex=' + encodeURIComponent(hex) + '&from=' + encodeURIComponent(cutoff.toISOString()))
                 .then(r => r.json())
                 .then(points => {
+                    if (seq !== trackRequestSeq) return; // risposta superata da una più recente
+                    trackLayerGroup.clearLayers();
                     if (!Array.isArray(points) || points.length < 2) {
-                        document.getElementById('trackInfo').style.display = 'none';
                         if (!silent) {
+                            const wasIsolated = !!isolateTrackHex;
+                            hideTrack();
+                            if (wasIsolated) updateMarkers();
                             alert('Traccia non disponibile per il periodo selezionato (servono almeno 2 posizioni).');
+                            return;
                         }
+                        // Refresh da slider: la traccia resta "attiva" e il pannello
+                        // visibile, così il pulsante "Isola / Mostra tutti" resta
+                        // raggiungibile (prima il pannello spariva e, se l'isolamento
+                        // era attivo, la mappa restava bloccata su un solo contatto).
+                        document.getElementById('trackHexLabel').textContent = (label || hex) + ' (nessuna posizione nel periodo)';
+                        document.getElementById('trackInfo').style.display = 'block';
                         return;
                     }
                     const latlngs = points.map(p => [p.lat, p.lon]);
@@ -605,7 +648,7 @@ $notamAreasJson = json_encode($notamAreas);
                     points.forEach(p => {
                         const dot = L.circleMarker([p.lat, p.lon], {
                             radius: 3, color: '#ff6600', fillColor: '#ff6600', fillOpacity: 0.9, weight: 1
-                        }).bindPopup(`Alt: ${p.alt_ft || '?'} ft, Vel: ${p.gs_kt || '?'} kt<br><small>${p.first_seen_utc}</small>`);
+                        }).bindPopup(`Alt: ${p.alt_ft ?? '?'} ft, Vel: ${p.gs_kt ?? '?'} kt<br><small>${formatUtcIt(p.first_seen_utc)}</small>`);
                         trackLayerGroup.addLayer(dot);
                     });
                     // Al primo caricamento (click manuale) centra la mappa sulla traccia;
@@ -618,7 +661,7 @@ $notamAreasJson = json_encode($notamAreas);
                     document.getElementById('trackHexLabel').textContent = (label || hex) + ' (' + points.length + ' punti)';
                     document.getElementById('trackInfo').style.display = 'block';
                 })
-                .catch(() => { if (!silent) alert('Errore nel caricamento della traccia.'); });
+                .catch(() => { if (seq === trackRequestSeq && !silent) alert('Errore nel caricamento della traccia.'); });
         }
         // -------------------------------------------------------------
 
@@ -632,6 +675,14 @@ $notamAreasJson = json_encode($notamAreas);
             return EMERGENCY_SQUAWKS.includes(String(squawk || '').trim());
         }
 
+        // Il logger scrive True/False (o vuoto se ignoto): prima un valore assente
+        // era mostrato come "No", cioè "in volo", senza saperlo davvero.
+        function groundLabel(g) {
+            const v = String(g ?? '').trim().toLowerCase();
+            if (v === '') return '?';
+            return ['true', '1', 'yes'].includes(v) ? 'Sì' : 'No';
+        }
+
         function updateMarkers() {
             const unit = document.getElementById('timeUnit').value;
             const value = parseInt(document.getElementById('sliderValue').textContent, 10);
@@ -642,8 +693,7 @@ $notamAreasJson = json_encode($notamAreas);
             // Filtra marker in base a last_seen_utc (ed eventualmente solo squawk di emergenza)
             const filtered = allMarkers.filter(m => {
                 if (isolateTrackHex) return m.hex === isolateTrackHex;
-                const date = new Date(m.last_seen_utc);
-                if (date < cutoff) return false;
+                if (m.last_seen_ms < cutoff.getTime()) return false;
                 if (emergencyOnly && !isEmergencySquawk(m.squawk)) return false;
                 return true;
             });
@@ -663,8 +713,8 @@ $notamAreasJson = json_encode($notamAreas);
                     Naz: ${m.country_flag || ''} ${m.country || '-'}<br>
                     Reg: ${m.reg_url ? `<a href="${m.reg_url}" target="_blank">${m.reg}</a>` : (m.reg || '-')}<br>
                     Modello: ${m.model_url ? `<a href="${m.model_url}" target="_blank">${m.model_t}</a>` : (m.model_t || '-')}<br>
-                    Alt: ${m.alt_ft || '?'} ft, Vel: ${m.gs_kt || '?'} kt<br>
-                    Squawk: ${isEmergencySquawk(m.squawk) ? `<strong style="color:#dc3545;">⚠️ ${m.squawk} — ${EMERGENCY_SQUAWK_LABELS[String(m.squawk).trim()]}</strong>` : (m.squawk || '-')} | Rarità: ${m.rarity || '-'} | Ground: ${m.ground ? 'Sì' : 'No'}<br>
+                    Alt: ${m.alt_ft ?? '?'} ft, Vel: ${m.gs_kt ?? '?'} kt<br>
+                    Squawk: ${isEmergencySquawk(m.squawk) ? `<strong style="color:#dc3545;">⚠️ ${m.squawk} — ${EMERGENCY_SQUAWK_LABELS[String(m.squawk).trim()]}</strong>` : (m.squawk || '-')} | Rarità: ${m.rarity || '-'} | Ground: ${groundLabel(m.ground)}<br>
                     <small>${m.last_seen_it}</small><br>
                     <a href="#" onclick="showTrack('${m.hex}'); return false;">🛰️ Mostra traccia storica</a><br>
                     <a href="heatmap.php?hex=${m.hex}" target="_blank">🔥 Heatmap di questo contatto</a>
@@ -702,9 +752,11 @@ $notamAreasJson = json_encode($notamAreas);
 
             updateLegend(colorMode, filtered);
 
-            if (filtered.length === 0) {
-                alert('Nessun contatto nel periodo selezionato.');
-            }
+            // Messaggio nel pannello invece di alert(): trascinando lo slider su un
+            // periodo vuoto l'alert si ripresentava a ogni passo.
+            document.getElementById('periodStatus').textContent = filtered.length === 0
+                ? 'Nessun contatto nel periodo selezionato'
+                : filtered.length.toLocaleString('it-IT') + (filtered.length === 1 ? ' contatto' : ' contatti');
         }
 
         // Aggiorna slider in base ai pulsanti rapidi
@@ -738,6 +790,7 @@ $notamAreasJson = json_encode($notamAreas);
                         break;
                 }
                 sliderVal.textContent = slider.value;
+                todayMode = (period === 'today');
                 updateMarkers();
             });
         });
@@ -745,11 +798,25 @@ $notamAreasJson = json_encode($notamAreas);
         // Slider e unità
         document.getElementById('timeSlider').addEventListener('input', function() {
             document.getElementById('sliderValue').textContent = this.value;
+            todayMode = false;
             updateMarkers();
         });
-        document.getElementById('timeUnit').addEventListener('change', updateMarkers);
+        document.getElementById('timeUnit').addEventListener('change', () => { todayMode = false; updateMarkers(); });
         document.getElementById('colorMode').addEventListener('change', updateMarkers);
         document.getElementById('emergencyOnly').addEventListener('change', updateMarkers);
+
+        // Link "vedi sulla mappa" (map.php?focus=hex): se l'ultimo avvistamento è più
+        // vecchio del periodo predefinito (7 giorni) si allarga il periodo quanto
+        // basta, altrimenti il marker restava nascosto e il popup non si apriva.
+        if (focusHex) {
+            const fm = allMarkers.find(m => m.hex.toUpperCase() === focusHex.toUpperCase());
+            if (fm && fm.last_seen_ms < getCutoff('days', 7).getTime()) {
+                const days = Math.min(3650, Math.ceil((Date.now() - fm.last_seen_ms) / 86400000) + 1);
+                document.getElementById('timeUnit').value = 'days';
+                document.getElementById('timeSlider').value = days;
+                document.getElementById('sliderValue').textContent = days;
+            }
+        }
 
         // Inizializza
         updateMarkers();

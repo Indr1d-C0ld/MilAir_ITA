@@ -31,11 +31,15 @@ if ($from !== '') {
 }
 
 try {
-    $stmt = $db->prepare("SELECT first_seen_utc, lat, lon, alt_ft, gs_kt
-        FROM events
-        WHERE $where AND lat IS NOT NULL AND lon IS NOT NULL
-        ORDER BY first_seen_utc ASC
-        LIMIT 3000");
+    // Le 3000 posizioni PIÙ RECENTI, poi riordinate cronologicamente per la linea:
+    // con ORDER BY ASC LIMIT 3000 un periodo lungo mostrava solo l'inizio della traccia.
+    $stmt = $db->prepare("SELECT * FROM (
+            SELECT first_seen_utc, lat, lon, alt_ft, gs_kt
+            FROM events
+            WHERE $where AND lat IS NOT NULL AND lon IS NOT NULL
+            ORDER BY first_seen_utc DESC
+            LIMIT 3000
+        ) ORDER BY first_seen_utc ASC");
     foreach ($params as $k => $v) {
         $stmt->bindValue($k, $v);
     }

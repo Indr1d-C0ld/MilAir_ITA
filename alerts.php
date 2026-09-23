@@ -58,8 +58,11 @@ if ($readFilter === 'read') {
 } elseif ($readFilter === 'unread') {
     $where[] = 'is_read = 0';
 }
-if ($dateFrom !== '') { $where[] = 'created_at >= :dfrom'; $params[':dfrom'] = $dateFrom . ' 00:00:00'; }
-if ($dateTo !== '')   { $where[] = 'created_at <= :dto';   $params[':dto']   = $dateTo . ' 23:59:59'; }
+// Giorni italiani convertiti in UTC (le date in auth.db sono UTC): prima il
+// filtro "Al 22/09" escludeva ciò che era avvenuto dalle 22:00 (o 23:00) italiane.
+if (($dfrom = rome_day_start_utc($dateFrom)) !== null) { $where[] = 'created_at >= :dfrom'; $params[':dfrom'] = $dfrom; }
+if (($dto = rome_day_start_utc($dateTo, true)) !== null) { $where[] = 'created_at < :dto'; $params[':dto'] = $dto; }
+
 if ($search !== '') {
     $where[] = '(title LIKE :search OR detail LIKE :search OR hex LIKE :search OR note LIKE :search)';
     $params[':search'] = '%' . $search . '%';
@@ -100,6 +103,9 @@ $typeLabels = [
 ];
 
 function sortLinkAlert($columnKey, $label, $currentSort, $currentOrder, $getParams) {
+    // $order arriva già tradotto per SQL ('ASC'/'DESC'): prima il confronto con
+    // 'asc' falliva sempre, la freccia restava ▼ e il clic non invertiva mai l'ordine.
+    $currentOrder = strtolower($currentOrder);
     $newOrder = ($currentSort === $columnKey && $currentOrder === 'asc') ? 'desc' : 'asc';
     $arrow = '';
     if ($currentSort === $columnKey) $arrow = $currentOrder === 'asc' ? ' ▲' : ' ▼';

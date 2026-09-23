@@ -14,6 +14,15 @@ if (php_sapi_name() !== 'cli') { http_response_code(403); exit; }
  * crontab, va aggiunta manualmente al crontab reale del sistema.
  */
 
+// Una sola esecuzione alla volta: se una scansione dura più di 5 minuti (database
+// bloccato a lungo), la successiva ripartirebbe dallo stesso checkpoint e
+// genererebbe gli stessi avvisi due volte. Il lock si libera all'uscita.
+$runLock = fopen(sys_get_temp_dir() . '/milair_ita_alert_scan.lock', 'c');
+if ($runLock === false || !flock($runLock, LOCK_EX | LOCK_NB)) {
+    echo '[' . date('Y-m-d H:i:s') . "] Scansione precedente ancora in corso: salto questo giro.\n";
+    exit(0);
+}
+
 require_once __DIR__ . '/geo_lib.php';
 require_once __DIR__ . '/auth.php'; // solo per get_auth_db()/create_alert(): NON chiama auth_bootstrap() (nessuna sessione in CLI)
 

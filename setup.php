@@ -102,7 +102,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     <input type="password" name="password" required minlength="<?= PASSWORD_MIN_LENGTH ?>">
                 </label>
                 <label>Conferma password
-                    <input type="password" name="password_confirm" required minlength="10">
+                    <input type="password" name="password_confirm" required minlength="<?= PASSWORD_MIN_LENGTH ?>">
                 </label>
                 <button type="submit">Crea account amministratore</button>
             </form>

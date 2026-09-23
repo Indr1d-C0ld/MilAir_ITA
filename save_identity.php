@@ -66,17 +66,31 @@ try {
         $stmt = $db->prepare("DELETE FROM manual_overrides WHERE hex = ?");
         $stmt->bindValue(1, $hexLower);
         $stmt->execute();
-    } else {
+    } elseif ($reg !== '' || $callsign !== '' || $modelT !== '') {
+        // Un campo vuoto significa "non modificare" (è quanto promette il modale:
+        // "Lascia un campo vuoto per non modificarlo"), quindi si fondono i campi
+        // compilati con la correzione eventualmente già presente. In precedenza un
+        // campo vuoto AZZERAVA quel valore, e un invio con soli file scriveva
+        // comunque una riga — che, col modale precompilato con i dati osservati,
+        // trasformava in "correzione manuale" dati ADS-B mai corretti da nessuno,
+        // congelandoli: 14 correzioni su 16 in produzione erano identiche a dati
+        // già ricevuti, e una mostrava 8 missioni diverse di ae6da3 tutte come
+        // "JOLLY31". Per rimuovere una correzione esiste l'apposito pulsante.
         $stmt = $db->prepare("INSERT INTO manual_overrides (hex, reg, callsign, model_t, updated_at)
             VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)
-            ON CONFLICT(hex) DO UPDATE SET reg = excluded.reg, callsign = excluded.callsign,
-                model_t = excluded.model_t, updated_at = CURRENT_TIMESTAMP");
+            ON CONFLICT(hex) DO UPDATE SET
+                reg      = COALESCE(excluded.reg, manual_overrides.reg),
+                callsign = COALESCE(excluded.callsign, manual_overrides.callsign),
+                model_t  = COALESCE(excluded.model_t, manual_overrides.model_t),
+                updated_at = CURRENT_TIMESTAMP");
         $stmt->bindValue(1, $hexLower);
         $stmt->bindValue(2, $reg !== '' ? $reg : null);
         $stmt->bindValue(3, $callsign !== '' ? $callsign : null);
         $stmt->bindValue(4, $modelT !== '' ? $modelT : null);
         $stmt->execute();
     }
+    // Nessun campo compilato e nessuna rimozione: si stanno caricando solo foto,
+    // la tabella delle correzioni non va toccata.
 } catch (Exception $e) {
     http_response_code(500);
     error_log('save_identity.php: ' . $e->getMessage());

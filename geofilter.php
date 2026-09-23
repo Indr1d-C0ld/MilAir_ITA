@@ -1,5 +1,6 @@
 <?php
 require_once __DIR__ . '/auth.php';
+require_once __DIR__ . '/table_lib.php'; // geojson_polygons(): stessa lettura del filtro in tabella
 auth_bootstrap();
 log_access();
 require_role('collaboratore');
@@ -25,6 +26,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $name = trim($_POST['name'] ?? '');
         $note = trim($_POST['note'] ?? '');
         $geojson = $_POST['geojson'] ?? '';
+        // Un GeoJSON senza poligoni utilizzabili veniva salvato lo stesso e, applicato
+        // alla tabella, la svuotava senza spiegazioni.
+        if ($name !== '' && !geojson_polygons($geojson)) {
+            header('Location: geofilter.php?error=geojson');
+            exit;
+        }
         if ($name !== '' && $geojson !== '') {
             $stmt = $db->prepare("INSERT INTO geo_profiles (name, note, geojson) VALUES (?, ?, ?)");
             $stmt->bindValue(1, $name);
@@ -42,6 +49,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     } elseif (isset($_POST['import_geojson'])) {
         $name = trim($_POST['import_name'] ?? '');
         $geojson = trim($_POST['import_geojson'] ?? '');
+        if ($name !== '' && !geojson_polygons($geojson)) {
+            header('Location: geofilter.php?error=geojson');
+            exit;
+        }
         if ($name !== '' && $geojson !== '') {
             $stmt = $db->prepare("INSERT INTO geo_profiles (name, note, geojson) VALUES (?, 'Importato', ?)");
             $stmt->bindValue(1, $name);
@@ -51,6 +62,24 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         header('Location: geofilter.php');
         exit;
     }
+}
+
+// Esporta un profilo come file .geojson (il link "Esporta" puntava a un
+// export_geojson.php mai esistito: 404).
+if (isset($_GET['export'])) {
+    $stmt = $db->prepare("SELECT name, geojson FROM geo_profiles WHERE id = ?");
+    $stmt->bindValue(1, (int)$_GET['export'], SQLITE3_INTEGER);
+    $prof = $stmt->execute()->fetchArray(SQLITE3_ASSOC);
+    if (!$prof) {
+        http_response_code(404);
+        echo 'Profilo non trovato.';
+        exit;
+    }
+    $fname = preg_replace('/[^A-Za-z0-9_-]+/', '_', $prof['name']) ?: 'profilo';
+    header('Content-Type: application/geo+json; charset=utf-8');
+    header('Content-Disposition: attachment; filename="' . $fname . '.geojson"');
+    echo $prof['geojson'];
+    exit;
 }
 
 // Carica profili
@@ -93,6 +122,9 @@ $profiles = $db->query("SELECT * FROM geo_profiles ORDER BY created_at DESC");
 </head>
 <body>
     <?php render_nav('geofilter.php'); ?>
+    <?php if (($_GET['error'] ?? '') === 'geojson'): ?>
+        <p style="background:#f8d7da;color:#721c24;padding:10px 15px;border-radius:6px;">GeoJSON non valido o senza poligoni: profilo non salvato.</p>
+    <?php endif; ?>
 
     <h2>🌍 Filtro Geografico</h2>
     <p>Disegna uno o più poligoni sulla mappa, poi salvali come profilo. Potrai applicare il filtro dalla tabella.</p>
@@ -134,7 +166,7 @@ $profiles = $db->query("SELECT * FROM geo_profiles ORDER BY created_at DESC");
                 <small><?= htmlspecialchars($p['note'] ?? '') ?></small>
                 <div class="actions">
                     <a href="index.php?geofilter=<?= $p['id'] ?>" target="_blank">Applica</a>
-                    <a href="export_geojson.php?id=<?= $p['id'] ?>" target="_blank">Esporta</a>
+                    <a href="geofilter.php?export=<?= (int)$p['id'] ?>">Esporta</a>
                     <form method="post" style="display:inline;" onsubmit="return confirm('Eliminare profilo?');">
                         <?= csrf_field() ?>
                         <input type="hidden" name="delete_profile" value="1">

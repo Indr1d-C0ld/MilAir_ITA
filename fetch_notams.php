@@ -154,44 +154,63 @@ foreach ($calls as $argsStr) {
 
 echo "$logPrefix Analizzate " . count($rows) . " voci valide (" . $skipped . " scartate).\n";
 
-try {
-    $db = new SQLite3($dbPath);
-    $db->enableExceptions(true);
-    $db->busyTimeout(5000);
-    $db->exec("CREATE TABLE IF NOT EXISTS notams_cache (
-        id TEXT PRIMARY KEY,
-        lat REAL NOT NULL,
-        lon REAL NOT NULL,
-        area_type TEXT NOT NULL,
-        radius_nm REAL,
-        polygon_json TEXT,
-        reference TEXT,
-        meaning TEXT,
-        qcode TEXT,
-        notam_text TEXT,
-        validity TEXT,
-        fl_lower TEXT,
-        fl_upper TEXT,
-        fetched_at TEXT DEFAULT CURRENT_TIMESTAMP
-    )");
+// Scrittura con BEGIN IMMEDIATE, attesa lunga e fino a 3 tentativi: alle :00
+// girano anche csv_to_db.py e update_rarity.php e nei giorni scorsi un'esecuzione
+// su sei finiva con "database is locked" (cache NOTAM non aggiornata per 3 ore).
+$saved = false;
+for ($attempt = 1; $attempt <= 3 && !$saved; $attempt++) {
+    $db = null;
+    try {
+        $db = new SQLite3($dbPath);
+        $db->enableExceptions(true);
+        $db->busyTimeout(30000);
+        $db->exec("CREATE TABLE IF NOT EXISTS notams_cache (
+            id TEXT PRIMARY KEY,
+            lat REAL NOT NULL,
+            lon REAL NOT NULL,
+            area_type TEXT NOT NULL,
+            radius_nm REAL,
+            polygon_json TEXT,
+            reference TEXT,
+            meaning TEXT,
+            qcode TEXT,
+            notam_text TEXT,
+            validity TEXT,
+            fl_lower TEXT,
+            fl_upper TEXT,
+            fetched_at TEXT DEFAULT CURRENT_TIMESTAMP
+        )");
 
-    $db->exec('BEGIN');
-    $db->exec('DELETE FROM notams_cache');
-    $stmt = $db->prepare("INSERT INTO notams_cache
-        (id, lat, lon, area_type, radius_nm, polygon_json, reference, meaning, qcode, notam_text, validity, fl_lower, fl_upper)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)");
-    foreach ($rows as $r) {
-        for ($i = 0; $i < count($r); $i++) {
-            $stmt->bindValue($i + 1, $r[$i]);
+        // IMMEDIATE: il lock di scrittura si prende subito, dove busyTimeout è
+        // rispettato (vedi update_rarity.php per la storia completa).
+        $db->exec('BEGIN IMMEDIATE');
+        $db->exec('DELETE FROM notams_cache');
+        $stmt = $db->prepare("INSERT INTO notams_cache
+            (id, lat, lon, area_type, radius_nm, polygon_json, reference, meaning, qcode, notam_text, validity, fl_lower, fl_upper)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)");
+        foreach ($rows as $r) {
+            for ($i = 0; $i < count($r); $i++) {
+                $stmt->bindValue($i + 1, $r[$i]);
+            }
+            $stmt->execute();
+            $stmt->reset();
         }
-        $stmt->execute();
-        $stmt->reset();
-    }
-    $db->exec('COMMIT');
+        $stmt->close();
+        $db->exec('COMMIT');
+        $saved = true;
 
-    echo "$logPrefix Cache NOTAM aggiornata: " . count($rows) . " voci salvate.\n";
-} catch (Exception $e) {
-    if (isset($db)) { try { $db->exec('ROLLBACK'); } catch (Exception $ignored) {} }
-    echo "$logPrefix Errore database: " . $e->getMessage() . "\n";
+        echo "$logPrefix Cache NOTAM aggiornata: " . count($rows) . " voci salvate"
+            . ($attempt > 1 ? " (tentativo $attempt)" : '') . ".\n";
+    } catch (Exception $e) {
+        if ($db) { try { $db->exec('ROLLBACK'); } catch (Exception $ignored) {} }
+        echo "$logPrefix Errore database (tentativo $attempt/3): " . $e->getMessage() . "\n";
+        if ($attempt < 3) {
+            sleep(10);
+        }
+    } finally {
+        if ($db) { $db->close(); }
+    }
+}
+if (!$saved) {
     exit(1);
 }

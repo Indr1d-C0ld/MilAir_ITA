@@ -62,6 +62,16 @@ $cols = $db->query("PRAGMA table_info(rarity_cache)");
 while ($c = $cols->fetchArray(SQLITE3_ASSOC)) {
     if ($c['name'] === 'composite_score') { $hasScoreCol = true; break; }
 }
+// finalize() OBBLIGATORIO: il break sopra interrompe la lettura a metà, e una
+// query non completata né finalizzata tiene aperta la transazione di lettura
+// (lock SHARED) finché lo script non termina. Con il BEGIN IMMEDIATE più sotto,
+// che attende fino a 30s il lock di scrittura, si creava un deadlock con
+// csv_to_db.py: l'import teneva il lock di scrittura e al commit aspettava che
+// questo script rilasciasse la lettura; questo script aspettava l'import. Ne
+// usciva l'import, al timeout di 5s, con "database is locked" — ogni ora, allo
+// scoccare delle :00 quando partono entrambi (104 volte fra il 15 e il 23/09).
+// Riprodotto e verificato in modo deterministico su una copia del database.
+$cols->finalize();
 if (!$hasScoreCol) {
     $db->exec("ALTER TABLE rarity_cache ADD COLUMN composite_score INTEGER");
 }
@@ -84,11 +94,7 @@ function rarityPoints($groupSize) {
 // Regole personalizzate di nazionalità: stessa fonte usata da index.php, map.php
 // e stats.php. Senza di esse la nazionalità qui calcolata divergerebbe da quella
 // mostrata all'utente, falsando il punteggio di rarità (vedi getCountryCode()).
-$customRules = [];
-$resRules = $db->query("SELECT field, pattern, country_code FROM country_rules");
-while ($rule = $resRules->fetchArray(SQLITE3_ASSOC)) {
-    $customRules[] = $rule;
-}
+$customRules = loadCountryRules($db); // geo_lib.php: unica fonte, ordine = precedenza
 
 $rows = [];
 $operatorCounts = [];
@@ -105,6 +111,11 @@ while ($r = $res->fetchArray(SQLITE3_ASSOC)) {
     $countryCounts[$cc] = ($countryCounts[$cc] ?? 0) + 1;
     $rows[] = $r;
 }
+// Stessa precauzione per le altre letture, anche se completate: SQLite non
+// garantisce che un'istruzione arrivata in fondo rilasci subito il lock finché
+// non viene resettata o finalizzata. Prima di chiedere il lock di scrittura,
+// nessuna lettura deve restare aperta.
+$res->finalize(); // (le regole di nazionalità le legge e finalizza loadCountryRules())
 
 // --- Passata 2: punteggio composito e fascia finale ------------------------
 // Soglie sul punteggio composito (0-20 = seen_count[0-5]*2 + operatore[0-5] + nazionalità[0-5]),

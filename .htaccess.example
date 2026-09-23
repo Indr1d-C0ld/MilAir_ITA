@@ -86,7 +86,7 @@ RewriteRule ^cache/ - [F,L]
 # Oggi restituiscono una pagina vuota (non producono output), quindi non c'è una
 # fuga di dati: negarle è difesa in profondità, perché un errore futuro in una di
 # esse potrebbe altrimenti diventare visibile all'esterno.
-<FilesMatch "^(auth|geo_lib|diary_lib|news_lib|ai_lib)\.php$">
+<FilesMatch "^(auth|geo_lib|diary_lib|news_lib|ai_lib|table_lib)\.php$">
     Require all denied
 </FilesMatch>
 <Files "crontab.txt">

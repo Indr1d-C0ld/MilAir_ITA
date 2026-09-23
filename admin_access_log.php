@@ -23,8 +23,11 @@ $baseParams = array_intersect_key($_GET, array_flip(['date_from', 'date_to', 'pa
 
 $where = [];
 $params = [];
-if ($dateFrom !== '') { $where[] = 'ts >= :dfrom'; $params[':dfrom'] = $dateFrom . ' 00:00:00'; }
-if ($dateTo !== '')   { $where[] = 'ts <= :dto';   $params[':dto']   = $dateTo . ' 23:59:59'; }
+// Giorni italiani convertiti in UTC (le date in auth.db sono UTC): prima il
+// filtro "Al 22/09" escludeva ciò che era avvenuto dalle 22:00 (o 23:00) italiane.
+if (($dfrom = rome_day_start_utc($dateFrom)) !== null) { $where[] = 'ts >= :dfrom'; $params[':dfrom'] = $dfrom; }
+if (($dto = rome_day_start_utc($dateTo, true)) !== null) { $where[] = 'ts < :dto'; $params[':dto'] = $dto; }
+
 if ($pathFilter !== '') { $where[] = 'path = :path'; $params[':path'] = $pathFilter; }
 if ($roleFilter !== '') { $where[] = 'role = :role'; $params[':role'] = $roleFilter; }
 if ($search !== '') {
@@ -70,6 +73,9 @@ $resP = $db->query('SELECT DISTINCT path FROM access_log ORDER BY path');
 while ($r = $resP->fetchArray(SQLITE3_ASSOC)) $distinctPaths[] = $r['path'];
 
 function sortLinkLog($columnKey, $label, $currentSort, $currentOrder, $getParams) {
+    // $order arriva già tradotto per SQL ('ASC'/'DESC'): prima il confronto con
+    // 'asc' falliva sempre, la freccia restava ▼ e il clic non invertiva mai l'ordine.
+    $currentOrder = strtolower($currentOrder);
     $newOrder = ($currentSort === $columnKey && $currentOrder === 'asc') ? 'desc' : 'asc';
     $params = array_merge($getParams, ['sort' => $columnKey, 'order' => $newOrder]);
     $arrow = '';
@@ -187,9 +193,16 @@ function sortLinkLog($columnKey, $label, $currentSort, $currentOrder, $getParams
     </div>
 
     <div class="pagination">
-        <?php for ($i = 1; $i <= $totalPages; $i++): ?>
+        <?php
+        // Prima, ultima e una finestra attorno alla pagina corrente: con 90 giorni
+        // di log le pagine sono centinaia e si stampava un link per ognuna.
+        $shown = array_unique(array_merge([1, $totalPages], range(max(1, $page - 3), min($totalPages, $page + 3))));
+        sort($shown);
+        $prev = 0;
+        foreach ($shown as $i):
+            if ($i - $prev > 1): ?><span>…</span><?php endif; $prev = $i; ?>
             <a href="?<?= http_build_query(array_merge($baseParams, ['page' => $i])) ?>"<?= $i === $page ? ' style="font-weight:bold;"' : '' ?>><?= $i ?></a>
-        <?php endfor; ?>
+        <?php endforeach; ?>
     </div>
 </body>
 </html>

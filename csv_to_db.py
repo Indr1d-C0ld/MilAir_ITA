@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-import sqlite3, csv, os, datetime
+import sqlite3, csv, os, datetime, re
 
 DB_FILE = os.path.join(os.path.dirname(__file__), 'events.db')
 CSV_FILE = os.path.join(os.path.dirname(__file__), 'mil.csv')
@@ -23,12 +23,36 @@ def calc_max_streak(dates):
             curr = 1
     return max_streak
 
+HEX_RE = re.compile(r'^~?[0-9a-f]{6}$')
+TS_RE = re.compile(r'^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2} UTC$')
+
+def field(r, key):
+    """Valore testuale ripulito. Una riga troncata (il logger stava ancora
+    scrivendo) ha i campi mancanti a None: prima None.strip() sollevava
+    un'eccezione fuori da ogni try e interrompeva l'intero import."""
+    v = r.get(key)
+    return v.strip() if isinstance(v, str) else ''
+
+def num(v, conv):
+    """Numero o None: una stringa vuota finiva nel database come testo '',
+    che SQLite ordina sopra ogni numero (quote "vuote" nella fascia 30k+)."""
+    if v == '':
+        return None
+    try:
+        return conv(v)
+    except ValueError:
+        return None
+
 def main():
     if not os.path.isfile(CSV_FILE):
         print("CSV non trovato.")
         return
 
-    conn = sqlite3.connect(DB_FILE)
+    # timeout=30: di default sqlite3 attende solo 5 secondi un lock occupato.
+    # update_rarity.php (ogni ora, alle :00 come questo import) ne attende 30:
+    # con attese asimmetriche, in caso di contesa a cedere era sempre l'import,
+    # che falliva al commit con "database is locked".
+    conn = sqlite3.connect(DB_FILE, timeout=30)
     conn.execute("PRAGMA journal_mode=DELETE")
 
     # Creazione tabelle (se non esistono)
@@ -76,29 +100,38 @@ def main():
     with open(CSV_FILE, newline='', encoding='utf-8') as f:
         reader = csv.DictReader(f, delimiter=',', skipinitialspace=True)
         rows = list(reader)
+        fieldnames = reader.fieldnames or []
 
     cur = conn.cursor()
     events_inserted = 0
     aircraft_updated = 0
     identity_updated = 0
 
+    skipped = 0
     for r in rows:
-        hex_val = r.get('hex', '').strip()
-        if not hex_val:
+        hex_val = field(r, 'hex').lower()
+        ts = field(r, 'first_seen_utc')
+        # Righe malformate (troncate, spostate di colonna): scartate invece di
+        # inserire date o hex non validi che poi rompono ordinamenti e confronti.
+        # Una riga con meno colonne dell'intestazione è quasi sempre l'ultima, che il
+        # logger sta ancora scrivendo: la si salta e verrà importata intera al giro
+        # successivo (se entrasse ora, INSERT OR IGNORE terrebbe la versione monca).
+        truncated = any(r.get(k) is None for k in fieldnames)
+        if truncated or not HEX_RE.match(hex_val) or not TS_RE.match(ts):
+            skipped += 1
             continue
 
-        ts = r.get('first_seen_utc', '').strip()
         date_str = ts[:10]
-        callsign = r.get('callsign', '').strip() or None
-        reg = r.get('reg', '').strip() or None
-        model = r.get('model_t', '').strip() or None
-        lat = r.get('lat', '').strip()
-        lon = r.get('lon', '').strip()
-        alt = r.get('alt_ft', '').strip()
-        gs = r.get('gs_kt', '').strip()
-        squawk = r.get('squawk', '').strip() or None
-        ground = r.get('ground', '').strip() or None
-        category = r.get('category', '').strip() or None
+        callsign = field(r, 'callsign') or None
+        reg = field(r, 'reg') or None
+        model = field(r, 'model_t') or None
+        lat = num(field(r, 'lat'), float)
+        lon = num(field(r, 'lon'), float)
+        alt = num(field(r, 'alt_ft'), lambda x: int(float(x)))
+        gs = num(field(r, 'gs_kt'), float)
+        squawk = field(r, 'squawk') or None
+        ground = field(r, 'ground') or None
+        category = field(r, 'category') or None
 
         # 1. Evento storico
         try:
@@ -179,7 +212,8 @@ def main():
 
     conn.commit()
     conn.close()
-    print(f"Import: {events_inserted} eventi, {aircraft_updated} aerei, {identity_updated} identità.")
+    print(f"Import: {events_inserted} eventi, {aircraft_updated} aerei, {identity_updated} identità"
+          + (f", {skipped} righe malformate scartate." if skipped else "."))
 
 if __name__ == "__main__":
     main()
