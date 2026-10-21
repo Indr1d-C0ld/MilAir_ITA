@@ -196,7 +196,7 @@ try {
     <meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1">
     <title>Statistiche MILAIR ITA</title>
     <link rel="stylesheet" href="style.css">
-    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js"></script>
     <style>
         canvas { max-width: 600px; margin: 0 auto 20px; display: block; }
         .op-logo { height: 15px; width: auto; vertical-align: middle; margin-right: 4px; }
@@ -555,6 +555,12 @@ try {
     <canvas id="squawkChart" width="600" height="250"></canvas>
 
     <script>
+        // I colori del tema scuro (tema.css): assi, griglie, testo in monospaziato
+        Chart.defaults.color = '#7f94a7';
+        Chart.defaults.borderColor = 'rgba(44, 66, 85, .55)';
+        Chart.defaults.font.family = '"JetBrains Mono", ui-monospace, monospace';
+        Chart.defaults.font.size = 11;
+
         // Eventi giornalieri
         new Chart(document.getElementById('dailyChart'), {
             type: 'line',
@@ -563,8 +569,9 @@ try {
                 datasets: [{
                     label: 'Contatti distinti',
                     data: <?= json_encode(array_column($dates, 'cnt')) ?>,
-                    borderColor: 'rgba(75, 192, 192, 1)',
-                    backgroundColor: 'rgba(75, 192, 192, 0.2)',
+                    borderColor: '#f2a33a',
+                    backgroundColor: 'rgba(242, 163, 58, 0.14)',
+                    fill: true,
                     tension: 0.2
                 }]
             },
@@ -616,12 +623,12 @@ try {
         const rarityLabels = <?= json_encode(array_column($rarity, 'rarity')) ?>;
         const rarityCounts = <?= json_encode(array_column($rarity, 'cnt')) ?>;
         const rarityColors = {
-            'Mythic': '#dc3545',
-            'Legendary': '#ff8c00',
-            'Epic': '#6f42c1',
-            'Rare': '#007bff',
-            'Uncommon': '#28a745',
-            'Common': '#6c757d'
+            'Mythic': '#ff4d6d',
+            'Legendary': '#ff9f1c',
+            'Epic': '#b48cff',
+            'Rare': '#5cc8ff',
+            'Uncommon': '#3ddc97',
+            'Common': '#9aa9b7'
         };
         new Chart(document.getElementById('rarityChart'), {
             type: 'pie',

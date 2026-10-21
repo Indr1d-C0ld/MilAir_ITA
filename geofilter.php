@@ -92,10 +92,10 @@ $profiles = $db->query("SELECT * FROM geo_profiles ORDER BY created_at DESC");
     <title>Filtro Geografico – MILAIR ITA</title>
     <link rel="stylesheet" href="leaflet/leaflet.css" />
     <!-- Leaflet.draw da CDN per risolvere problema icone -->
-    <link rel="stylesheet" href="https://unpkg.com/leaflet-draw@1.0.4/dist/leaflet.draw.css" />
+    <link rel="stylesheet" href="leaflet/leaflet.draw.css" />
     <link rel="stylesheet" href="style.css">
     <script src="leaflet/leaflet.js"></script>
-    <script src="https://unpkg.com/leaflet-draw@1.0.4/dist/leaflet.draw.js"></script>
+    <script src="leaflet/leaflet.draw.js"></script>
     <style>
         #map { height: 500px; width: 100%; margin-bottom: 20px; }
         .geo-form { background: #f8f9fa; padding: 15px; border-radius: 8px; margin-bottom: 20px; }
@@ -185,9 +185,13 @@ $profiles = $db->query("SELECT * FROM geo_profiles ORDER BY created_at DESC");
         // anti-abuso) e i tile CARTO anonimi richiedono adesso una API key.
         // Esri World Street Map non richiede chiave per uso leggero come questo.
         // Nota: l'URL Esri usa l'ordine {z}/{y}/{x} (non {z}/{x}/{y}).
-        L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Street_Map/MapServer/tile/{z}/{y}/{x}', {
-            attribution: 'Tiles &copy; Esri &mdash; Source: Esri, DeLorme, NAVTEQ',
-            maxZoom: 19
+        // Base notturna, come le altre mappe del portale
+        L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Dark_Gray_Base/MapServer/tile/{z}/{y}/{x}', {
+            attribution: 'Tiles &copy; Esri &mdash; Esri, HERE, Garmin, OpenStreetMap',
+            maxZoom: 16
+        }).addTo(map);
+        L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Dark_Gray_Reference/MapServer/tile/{z}/{y}/{x}', {
+            maxZoom: 16, pane: 'shadowPane'
         }).addTo(map);
 
         // FeatureGroup per i layer disegnati

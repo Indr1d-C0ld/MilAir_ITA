@@ -343,11 +343,11 @@ $notamAreasJson = json_encode($notamAreas);
         <span id="periodStatus" class="period-status"></span>
         <label>Colora per:
             <select id="colorMode">
-                <option value="none">Nessuna (icona standard)</option>
+                <option value="none">Nessuna (simbolo neutro)</option>
                 <option value="alt">Altitudine</option>
                 <option value="speed">Velocità</option>
                 <option value="country">Nazionalità</option>
-                <option value="rarity">Rarità</option>
+                <option value="rarity" selected>Rarità</option>
             </select>
         </label>
         <label>
@@ -366,7 +366,19 @@ $notamAreasJson = json_encode($notamAreas);
         const osmLayer = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Street_Map/MapServer/tile/{z}/{y}/{x}', {
             attribution: 'Tiles &copy; Esri &mdash; Source: Esri, DeLorme, NAVTEQ',
             maxZoom: 19
-        }).addTo(map);
+        });
+        // Base predefinita: il grigio scuro di Esri (stesso fornitore, nessuna
+        // chiave), con le etichette in un livello a parte. Sul fondo scuro i
+        // contatti colorati si leggono a colpo d'occhio.
+        const notturnaLayer = L.layerGroup([
+            L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Dark_Gray_Base/MapServer/tile/{z}/{y}/{x}', {
+                attribution: 'Tiles &copy; Esri &mdash; Esri, HERE, Garmin, OpenStreetMap', maxZoom: 16
+            }),
+            L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Dark_Gray_Reference/MapServer/tile/{z}/{y}/{x}', {
+                maxZoom: 16
+            })
+        ]).addTo(map);
+        window.addEventListener('load', () => map.invalidateSize());
 
         const satelliteLayer = L.tileLayer('satellite_tile.php?z={z}&x={x}&y={y}', {
             minZoom: 4,
@@ -389,14 +401,20 @@ $notamAreasJson = json_encode($notamAreas);
             });
         });
 
-        const planeIcon = L.icon({
-            iconUrl: 'leaflet/marker-icon-2x-blue.png',
-            shadowUrl: 'leaflet/marker-shadow.png',
-            iconSize: [25, 41],
-            iconAnchor: [12, 41],
-            popupAnchor: [1, -34],
-            shadowSize: [41, 41]
-        });
+        // Il simbolo di un contatto: un aereo visto dall'alto, colorato secondo
+        // «Colora per» (neutro se nessuna colorazione), piu' grande e rosso con
+        // un alone per gli squawk di emergenza. Non conosciamo la prua (l'ADS-B
+        // registrato non la conserva): punta sempre a nord.
+        function iconaContatto(colore, emergenza) {
+            const lato = emergenza ? 30 : 22;
+            const sagoma = 'M12 2.5c.8 0 1.3.9 1.3 2v5.2l7.2 4.3v2l-7.2-2.2v4.6l2.2 1.7v1.6L12 20.8l-3.5.9v-1.6l2.2-1.7v-4.6L3.5 16v-2l7.2-4.3V4.5c0-1.1.5-2 1.3-2z';
+            const alone = emergenza ? '<circle cx="12" cy="12" r="11" fill="none" stroke="#ff5b6e" stroke-width="1.2" opacity=".8"/>' : '';
+            return L.divIcon({
+                className: 'contatto' + (emergenza ? ' emergenza' : ''),
+                iconSize: [lato, lato], iconAnchor: [lato / 2, lato / 2], popupAnchor: [0, -lato / 2],
+                html: `<svg viewBox="0 0 24 24" width="${lato}" height="${lato}">${alone}<path d="${sagoma}" fill="${colore}" stroke="#0a0f14" stroke-width="1.1"/></svg>`
+            });
+        }
 
         const allMarkers = <?= $markersJson ?>;
         let layerGroup = L.layerGroup().addTo(map);
@@ -452,6 +470,7 @@ $notamAreasJson = json_encode($notamAreas);
 
         // ---------------- Selettore layer unificato ----------------
         const baseLayers = {
+            'Notturna (Esri)': notturnaLayer,
             '🗺️ Stradale (Esri)': osmLayer,
             '🛰️ Satellite (Copernicus)': satelliteLayer
         };
@@ -464,9 +483,10 @@ $notamAreasJson = json_encode($notamAreas);
         // ---------------- Colorazione dinamica dei pin ----------------
         const ALT_MAX = 45000;   // ft, tetto usato per la scala
         const SPEED_MAX = 600;   // kt, tetto usato per la scala
+        // gli stessi colori della tabella (tema.css), schiariti per il fondo scuro
         const RARITY_COLORS = {
-            'Mythic': '#dc3545', 'Legendary': '#ff8c00', 'Epic': '#6f42c1',
-            'Rare': '#007bff', 'Uncommon': '#28a745', 'Common': '#6c757d'
+            'Mythic': '#ff4d6d', 'Legendary': '#ff9f1c', 'Epic': '#b48cff',
+            'Rare': '#5cc8ff', 'Uncommon': '#3ddc97', 'Common': '#9aa9b7'
         };
 
         function gradientColor(value, max) {
@@ -729,26 +749,11 @@ $notamAreasJson = json_encode($notamAreas);
                 const emergency = isEmergencySquawk(m.squawk);
                 const color = markerColor(colorMode, m);
                 let marker;
-                if (emergency) {
-                    // Uno squawk di emergenza ha sempre priorità visiva, indipendentemente dalla colorazione attiva
-                    marker = L.circleMarker([m.lat, m.lon], {
-                        radius: 12,
-                        fillColor: '#dc3545',
-                        color: '#ffffff',
-                        weight: 2,
-                        fillOpacity: 0.95
-                    }).bindPopup(popupContent);
-                } else if (color) {
-                    marker = L.circleMarker([m.lat, m.lon], {
-                        radius: 8,
-                        fillColor: color,
-                        color: '#ffffff',
-                        weight: 1.5,
-                        fillOpacity: 0.9
-                    }).bindPopup(popupContent);
-                } else {
-                    marker = L.marker([m.lat, m.lon], {icon: planeIcon}).bindPopup(popupContent);
-                }
+                // Uno squawk di emergenza ha sempre priorità visiva, indipendentemente dalla colorazione attiva
+                marker = L.marker([m.lat, m.lon], {
+                    icon: iconaContatto(emergency ? '#ff5b6e' : (color || '#cdd7e0'), emergency),
+                    zIndexOffset: emergency ? 1000 : 0
+                }).bindPopup(popupContent);
                 layerGroup.addLayer(marker);
 
                 if (focusHex && m.hex.toUpperCase() === focusHex.toUpperCase()) {

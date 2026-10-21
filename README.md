@@ -104,7 +104,9 @@ Tutti e due vengono creati automaticamente (schema `CREATE TABLE IF NOT EXISTS`)
 ├── map_secrets.php.example, ai_secrets.php.example          → template chiavi API (copiare senza ".example")
 ├── crontab.txt, milair-logger.service, milair-tmpfiles.conf,
 │   fix_permissions.sh                                       → esempi di configurazione per il deploy
-├── style.css                                                → stile applicazione
+├── style.css, tema.css                                       → stile applicazione; tema.css (tema scuro «sala operativa»,
+│                                                              caricato da render_nav() dopo gli stili delle pagine)
+├── fonts/                                                   → JetBrains Mono ridotto ai caratteri latini (woff2), per i dati
 ├── leaflet/                                                 → libreria Leaflet + plugin (draw, heat), self-hosted
 ├── flags/                                                   → set di bandiere SVG per codice ISO (nazionalità)
 └── polygons.json                                            → confini Italia (Natural Earth, per il geofiltro)

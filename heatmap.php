@@ -187,10 +187,15 @@ $pageTitle = $hexFilter !== '' ? 'Heatmap — HEX ' . strtoupper($hexFilter) : '
         // anti-abuso) e i tile CARTO anonimi richiedono adesso una API key.
         // Esri World Street Map non richiede chiave per uso leggero come questo.
         // Nota: l'URL Esri usa l'ordine {z}/{y}/{x} (non {z}/{x}/{y}).
-        L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Street_Map/MapServer/tile/{z}/{y}/{x}', {
-            attribution: 'Tiles &copy; Esri &mdash; Source: Esri, DeLorme, NAVTEQ',
-            maxZoom: 19
+        // Base notturna, come la mappa dei contatti: il calore risalta sul grigio scuro
+        L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Dark_Gray_Base/MapServer/tile/{z}/{y}/{x}', {
+            attribution: 'Tiles &copy; Esri &mdash; Esri, HERE, Garmin, OpenStreetMap',
+            maxZoom: 16
         }).addTo(map);
+        L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Dark_Gray_Reference/MapServer/tile/{z}/{y}/{x}', {
+            maxZoom: 16, pane: 'shadowPane'
+        }).addTo(map);
+        window.addEventListener('load', () => map.invalidateSize());
 
         const allPoints = <?= $pointsJson ?>;
         const isHexFiltered = <?= json_encode($hexFilter !== '') ?>;

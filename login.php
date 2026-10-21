@@ -37,10 +37,12 @@ $next = safe_local_url($_GET['next'] ?? $_POST['next'] ?? '');
         .login-box button { width: 100%; padding: 10px; margin-top: 10px; }
         .login-error { background: #f8d7da; color: #721c24; border: 1px solid #f5c6cb; border-radius: 6px; padding: 10px; margin-bottom: 14px; font-size: 0.9em; }
     </style>
+    <link rel="stylesheet" href="tema.css?v=<?= (int)@filemtime(__DIR__ . '/tema.css') ?>">
 </head>
 <body>
+    <div class="classifica">Non classificato // Fonti aperte · dati ADS-B pubblici</div>
     <div class="login-box">
-        <h2>🔑 Accedi</h2>
+        <h2>Accedi a MILAIR <span style="color:var(--ambra,#f2a33a)">ITA</span></h2>
         <?php if ($error): ?>
             <div class="login-error"><?= htmlspecialchars($error) ?></div>
         <?php endif; ?>

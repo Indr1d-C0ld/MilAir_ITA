@@ -483,37 +483,129 @@ function prune_old_logs(): void {
     $db->exec("DELETE FROM alerts         WHERE is_read = 1 AND created_at < datetime('now', '-" . ALERTS_RETENTION_DAYS . " days')");
 }
 
+/** Le icone del menu: tratto lineare, stesse proporzioni, colore del testo. */
+const ICONE_MENU = [
+    'tabella'    => '<rect x="3" y="4" width="18" height="16" rx="1.5"/><path d="M3 9h18M3 14.5h18M9 9v11"/>',
+    'mappa'      => '<path d="M9 4 3 6v14l6-2 6 2 6-2V4l-6 2-6-2zM9 4v14M15 6v14"/>',
+    'heatmap'    => '<path d="M12 3c1 3 5 5.2 5 10a5 5 0 0 1-10 0c0-2.5 1.4-4.1 2.5-5 .3 1.6 1.1 2.6 2.4 3 .6-2.6-.4-5.4.1-8z"/>',
+    'statistiche'=> '<path d="M3 21h18M6.5 17v-5M11 17V7M15.5 17v-8M20 17V4"/>',
+    'diario'     => '<path d="M5 4h11a3 3 0 0 1 3 3v13H8a3 3 0 0 1-3-3V4z"/><path d="M5 17a3 3 0 0 1 3-3h11M9 8h6"/>',
+    'favoriti'   => '<path d="m12 3.5 2.6 5.3 5.9.9-4.3 4.1 1 5.8L12 16.8l-5.2 2.8 1-5.8-4.3-4.1 5.9-.9z"/>',
+    'richieste'  => '<rect x="3" y="5" width="18" height="14" rx="1.5"/><path d="m3.5 6.5 8.5 6 8.5-6"/>',
+    'regole'     => '<path d="M4 6h9M17 6h3M4 12h3M11 12h9M4 18h11M19 18h1"/><circle cx="15" cy="6" r="2"/><circle cx="9" cy="12" r="2"/><circle cx="17" cy="18" r="2"/>',
+    'geofiltro'  => '<path d="M5 8.5 11 4l8 3-1 9.5-7 3.5-6-5z"/><circle cx="11.5" cy="11.5" r="1.6"/>',
+    'utenti'     => '<circle cx="12" cy="8" r="4"/><path d="M4 21a8 8 0 0 1 16 0"/>',
+    'posta'      => '<path d="M3 13.5 6 5h12l3 8.5V19H3z"/><path d="M3 13.5h5l1 3h6l1-3h5"/>',
+    'accedi'     => '<path d="M10 17l5-5-5-5M15 12H3M14 3h5a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-5"/>',
+    'esci'       => '<path d="M14 17l5-5-5-5M19 12H8M10 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5"/>',
+    'campanella' => '<path d="M6 16v-5a6 6 0 0 1 12 0v5l2 2H4z"/><path d="M10 20.5a2 2 0 0 0 4 0"/>',
+];
+
+function icona(string $nome): string {
+    return '<svg class="icona" viewBox="0 0 24 24" aria-hidden="true">' . (ICONE_MENU[$nome] ?? '') . '</svg>';
+}
+
+/**
+ * Lo stato della raccolta per il cruscotto della testata: l'ultimo contatto
+ * registrato e quanti velivoli distinti oggi (giorno italiano). Una lettura
+ * per pagina, sull'indice della chiave primaria di events.
+ */
+function stato_raccolta(): array {
+    static $stato = null;
+    if ($stato !== null) {
+        return $stato;
+    }
+    $stato = ['ultimo' => null, 'oggi' => null];
+    try {
+        $db = new SQLite3(EVENTS_DB_PATH, SQLITE3_OPEN_READONLY);
+        $db->busyTimeout(2000);
+        $stato['ultimo'] = $db->querySingle("SELECT MAX(first_seen_utc) FROM events") ?: null;
+        $inizio = rome_day_start_utc((new DateTime('now', new DateTimeZone('Europe/Rome')))->format('Y-m-d'));
+        if ($inizio !== null) {
+            $st = $db->prepare("SELECT COUNT(DISTINCT hex) FROM events WHERE first_seen_utc >= ?");
+            $st->bindValue(1, $inizio);
+            $stato['oggi'] = (int)$st->execute()->fetchArray(SQLITE3_NUM)[0];
+        }
+        $db->close();
+    } catch (Throwable $e) {
+        // senza database la testata resta muta, la pagina dira' il resto
+    }
+    return $stato;
+}
+
 // ---------------------------------------------------------------------------
-// Navigazione condivisa — sostituisce il blocco <div class="nav-links">
-// finora duplicato in ogni pagina, con i link condizionati al ruolo.
+// Testata e navigazione condivise: la fascia di classifica, il marchio, il
+// cruscotto della raccolta e il menu, con i link condizionati al ruolo.
+// Carica anche tema.css: arriva dopo gli stili interni delle pagine, e li
+// ridefinisce senza doverli riscrivere uno per uno.
 // ---------------------------------------------------------------------------
 
 function render_nav(string $current = ''): void {
     $user = current_user();
     $links = [
-        'index.php'     => '📋 Tabella',
-        'map.php'       => '🗺️ Mappa',
-        'heatmap.php'   => '🔥 Heatmap',
-        'stats.php'     => '📊 Statistiche',
-        'diary.php'     => '📓 Diario',
-        'favorites.php' => '⭐ Favoriti',
+        'index.php'     => ['tabella', 'Tabella'],
+        'map.php'       => ['mappa', 'Mappa'],
+        'heatmap.php'   => ['heatmap', 'Heatmap'],
+        'stats.php'     => ['statistiche', 'Statistiche'],
+        'diary.php'     => ['diario', 'Diario'],
+        'favorites.php' => ['favoriti', 'Favoriti'],
     ];
     if ($user) {
-        $links['rules.php']     = '🛠️ Regole';
-        $links['geofilter.php'] = '🌍 Filtro Geografico';
+        $links['rules.php']     = ['regole', 'Regole'];
+        $links['geofilter.php'] = ['geofiltro', 'Filtro geografico'];
     } else {
-        $links['richieste.php'] = '✉️ Richieste';
+        $links['richieste.php'] = ['richieste', 'Richieste'];
     }
     if ($user && $user['role'] === 'admin') {
-        $links['admin_users.php']        = '👤 Utenti';
-        $links['admin_richieste.php']    = '📬 Richieste';
+        $links['admin_users.php']     = ['utenti', 'Utenti'];
+        $links['admin_richieste.php'] = ['posta', 'Richieste'];
     }
 
-    echo '<div class="nav-links">';
+    $v = @filemtime(__DIR__ . '/tema.css') ?: 1;
+    echo '<link rel="stylesheet" href="tema.css?v=' . $v . '">';
+
+    // Cruscotto: da quanto tempo non arriva un contatto (verde entro 15 minuti,
+    // ambra entro 3 ore: di notte e' normale non vederne)
+    $stato = stato_raccolta();
+    $spia = 'grigia';
+    $ultimo = '—';
+    $fa = '';
+    if ($stato['ultimo']) {
+        $t = strtotime(str_replace(' UTC', '', $stato['ultimo']) . ' UTC');
+        $min = max(0, (int)floor((time() - $t) / 60));
+        $spia = $min <= 15 ? 'verde' : ($min <= 180 ? 'ambra' : 'grigia');
+        $ultimo = gmdate('H:i', $t) . 'Z';
+        $fa = $min < 60 ? "$min min fa" : ($min < 2880 ? floor($min / 60) . ' h fa' : floor($min / 1440) . ' g fa');
+    }
+
+    echo '<div class="classifica">Non classificato // Fonti aperte · dati ADS-B pubblici</div>';
+    echo '<header class="milair-testata">';
+    echo '<a class="marchio" href="index.php" title="MilAir ITA — tabella dei contatti">'
+        . '<svg class="radar" viewBox="0 0 40 40" aria-hidden="true">'
+        . '<defs><linearGradient id="radarSpazzata" x1="0" y1="0" x2="1" y2="0"><stop offset="0" stop-color="#3ddc97" stop-opacity="0"/><stop offset="1" stop-color="#3ddc97" stop-opacity=".55"/></linearGradient></defs>'
+        . '<circle cx="20" cy="20" r="18.5" fill="#0b1712" stroke="#2c4255"/>'
+        . '<circle cx="20" cy="20" r="12.5" fill="none" stroke="#1d3a2b"/><circle cx="20" cy="20" r="6.5" fill="none" stroke="#1d3a2b"/>'
+        . '<path d="M20 1.5v37M1.5 20h37" stroke="#1d3a2b"/>'
+        . '<path d="M20 20 20 1.5A18.5 18.5 0 0 1 36 10.8Z" fill="url(#radarSpazzata)"/>'
+        . '<circle cx="27.5" cy="11" r="1.9" fill="#f2a33a"/><circle cx="12" cy="26" r="1.4" fill="#3ddc97"/>'
+        . '</svg>'
+        . '<span><span class="marchio-nome">MILAIR<b>ITA</b></span>'
+        . '<span class="marchio-sotto">Traffico aereo militare sull\'Italia · sorveglianza ADS-B</span></span></a>';
+    echo '<div class="cruscotto">';
+    echo '<span title="Ultimo contatto registrato (ora Zulu)"><i class="spia ' . $spia . '"></i>ULTIMO <b>' . htmlspecialchars($ultimo) . '</b>'
+        . ($fa !== '' ? ' ' . htmlspecialchars($fa) : '') . '</span>';
+    if ($stato['oggi'] !== null) {
+        echo '<span title="Velivoli distinti visti oggi (giorno italiano)">OGGI <b>' . (int)$stato['oggi'] . '</b> velivoli</span>';
+    }
+    echo '<span class="orologio-zulu" title="Ora Zulu (UTC)"><b data-orologio="Z">' . gmdate('H:i:s') . '</b>Z</span>';
+    echo '<span class="orologio-locale" title="Ora italiana"><b data-orologio="L">' . date('H:i') . '</b>LT</span>';
+    echo '</div></header>';
+
+    echo '<nav class="nav-links" aria-label="Sezioni">';
     echo '<div class="nav-links-primary">';
-    foreach ($links as $href => $label) {
-        $style = ($href === $current) ? ' style="text-decoration:underline;"' : '';
-        echo '<a href="' . htmlspecialchars($href) . '"' . $style . '>' . $label . '</a>';
+    foreach ($links as $href => [$icona, $etichetta]) {
+        $attivo = ($href === $current) ? ' class="attivo" aria-current="page"' : '';
+        echo '<a href="' . htmlspecialchars($href) . '"' . $attivo . '>' . icona($icona) . '<span class="etichetta">' . $etichetta . '</span></a>';
     }
     echo '</div>';
     echo '<div class="nav-links-secondary">';
@@ -521,12 +613,26 @@ function render_nav(string $current = ''): void {
         render_alert_bell();
     }
     if ($user) {
-        echo '<a href="logout.php">🚪 Esci (' . htmlspecialchars($user['display_name']) . ')</a>';
+        echo '<a href="logout.php">' . icona('esci') . '<span class="etichetta">Esci · ' . htmlspecialchars($user['display_name']) . '</span></a>';
     } else {
-        echo '<a href="login.php">🔑 Accedi</a>';
+        echo '<a href="login.php">' . icona('accedi') . '<span class="etichetta">Accedi</span></a>';
     }
     echo '</div>'; // .nav-links-secondary
-    echo '</div>'; // .nav-links
+    echo '</nav>'; // .nav-links
+
+    // Orologi della testata; sulla mappa, l'altezza della testata per dare alla
+    // cartina tutto il resto dello schermo.
+    echo '<script>(function(){'
+        . 'var z=document.querySelector("[data-orologio=Z]"),l=document.querySelector("[data-orologio=L]");'
+        . 'function p(n){return(n<10?"0":"")+n}'
+        . 'function t(){var d=new Date();if(z)z.textContent=p(d.getUTCHours())+":"+p(d.getUTCMinutes())+":"+p(d.getUTCSeconds());'
+        . 'if(l)l.textContent=p(d.getHours())+":"+p(d.getMinutes())}setInterval(t,1000);'
+        . (in_array($current, ['map.php', 'heatmap.php'], true)
+            ? 'document.body.classList.add("pagina-mappa");function h(){var n=document.querySelector(".nav-links"),c=document.querySelector(".classifica");'
+              . 'document.body.style.setProperty("--altezza-testata",(n.getBoundingClientRect().bottom)+"px");if(window.map&&map.invalidateSize)map.invalidateSize()}'
+              . 'h();window.addEventListener("resize",h);window.addEventListener("load",h);'
+            : '')
+        . '})();</script>';
 }
 
 /**
@@ -549,7 +655,7 @@ function render_alert_bell(): void {
     ];
 
     echo '<div class="alert-bell-wrap">';
-    echo '<button type="button" id="alertBell" class="alert-bell" data-csrf="' . htmlspecialchars($csrf) . '" onclick="toggleAlertDropdown(event)">🔔';
+    echo '<button type="button" id="alertBell" class="alert-bell" title="Notifiche" data-csrf="' . htmlspecialchars($csrf) . '" onclick="toggleAlertDropdown(event)">' . icona('campanella');
     echo '<span class="alert-badge" id="alertBadge" data-count="' . (int)$unread . '"' . ($unread > 0 ? '' : ' style="display:none;"') . '>' . ($unread > 99 ? '99+' : $unread) . '</span>';
     echo '</button>';
 

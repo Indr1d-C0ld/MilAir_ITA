@@ -77,8 +77,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         .setup-success { background: #d4edda; color: #155724; border: 1px solid #c3e6cb; border-radius: 6px; padding: 16px; text-align: center; }
         .setup-hint { font-size: 0.85em; color: #6c757d; margin-top: -8px; margin-bottom: 14px; }
     </style>
+    <link rel="stylesheet" href="tema.css?v=<?= (int)@filemtime(__DIR__ . '/tema.css') ?>">
 </head>
 <body>
+    <div class="classifica">Non classificato // Fonti aperte · dati ADS-B pubblici</div>
     <div class="setup-box">
         <h2>🛠️ Configurazione iniziale</h2>
         <?php if ($success): ?>
