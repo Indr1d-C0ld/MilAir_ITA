@@ -1,10 +1,10 @@
 <?php
+require_once __DIR__ . '/percorsi.php';
 require_once __DIR__ . '/auth.php';
 require_once __DIR__ . '/geo_lib.php';
 auth_bootstrap();
-log_access();
 
-$dbPath = __DIR__ . '/events.db';
+$dbPath = EVENTS_DB_PATH;
 function st_bar($v, $max, $w = 90) {
     $px = $max > 0 ? max(2, (int) round($w * $v / $max)) : 2;
     return '<span class="bar" style="width:' . $px . 'px"></span>';

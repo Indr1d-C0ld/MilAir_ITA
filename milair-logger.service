@@ -1,15 +1,29 @@
+# MilAir ITA — raccolta continua dei contatti militari (adsb.fi -> events.db).
+# Sostituire CHANGEME con l'utente proprietario dei file dell'app (lo stesso di
+# fix_permissions.sh). Il gruppo e' quello di Apache: i database li scrivono
+# entrambi. Dopo ogni registrazione il logger lancia update_rarity.php e
+# alert_scan.php.
 [Unit]
-Description=ADS-B Military Logger
-After=network.target
+Description=MilAir ITA - raccolta ADS-B dei velivoli militari
+After=network-online.target
+Wants=network-online.target
 
 [Service]
-ExecStart=/usr/bin/python3 /var/www/html/milair_ita/flight_mil_ita.py --interval 60 --csv /var/www/html/milair_ita/mil.csv --polygons-file /var/www/html/milair_ita/polygons.json
+ExecStart=/usr/bin/python3 -u /var/www/html/milair_ita/flight_mil_ita.py --interval 60
 WorkingDirectory=/var/www/html/milair_ita
-# Sostituisci con l'utente di sistema proprietario dei file dell'app
-# (lo stesso indicato in fix_permissions.sh).
 User=CHANGEME
+Group=www-data
+UMask=0007
+Environment=MILAIR_DATI=/var/lib/milair MILAIR_RAM=/run/milair
+Nice=5
 Restart=always
-RestartSec=10
+RestartSec=30
+# scrive solo i database (e il lock del limite di richieste, in /tmp privato)
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=yes
+ReadWritePaths=/var/lib/milair /run/milair
 
 [Install]
 WantedBy=multi-user.target

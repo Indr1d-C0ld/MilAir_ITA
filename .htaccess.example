@@ -42,11 +42,16 @@
     # accetta una sola origine e SAMEORIGIN confronta anche la porta, quindi
     # non sa esprimere l'eccezione e bloccherebbe comunque il frame.
     Header always set Content-Security-Policy "frame-ancestors 'self'"
+
+    # Niente indicizzazione: le combinazioni di filtri e ordinamenti della
+    # tabella sono infinite, e i crawler le percorrevano tutte (centinaia di
+    # migliaia di richieste al mese, ognuna con la tabella da ricalcolare).
+    Header always set X-Robots-Tag "noindex, nofollow"
 </IfModule>
 
 # Nega l'accesso diretto ai file contenenti le API key (mai serviti al browser,
 # usati solo lato server via require_once)
-<FilesMatch "^(map_secrets|geo_secrets|ai_secrets)\.php$">
+<FilesMatch "^(map_secrets|ai_secrets)\.php$">
     Require all denied
 </FilesMatch>
 
@@ -63,7 +68,7 @@ RewriteRule ^cache/ - [F,L]
     Require all denied
 </FilesMatch>
 
-# Nega l'accesso diretto ai database SQLite (auth.db/events.db/news.db e i loro
+# Nega l'accesso diretto ai database SQLite (auth.db/events.db e i loro
 # eventuali file collaterali .db-shm/.db-wal) — contengono dati sensibili
 # (hash delle password inclusi) e vanno acceduti solo lato server via PHP.
 <FilesMatch "\.db(-shm|-wal|-journal)?$">
@@ -72,10 +77,10 @@ RewriteRule ^cache/ - [F,L]
 
 # Nega l'accesso diretto a log applicativi, script server-side e file di
 # servizio lasciati nella web root dai cron (alerts.log, crontab.txt,
-# csv_to_db.py, flight_mil_ita.py, milair-logger.service, fix_permissions.sh,
+# flight_mil_ita.py, milair-logger.service, fix_permissions.sh,
 # index.php_old, rules.php_old, ecc.): erano scaricabili da chiunque, nessuna
 # pagina dell'app li richiama via browser.
-<FilesMatch "\.(log|py|sh|service)$">
+<FilesMatch "\.(log|py|sh|service|conf)$">
     Require all denied
 </FilesMatch>
 <FilesMatch "_old$">
@@ -86,7 +91,7 @@ RewriteRule ^cache/ - [F,L]
 # Oggi restituiscono una pagina vuota (non producono output), quindi non c'è una
 # fuga di dati: negarle è difesa in profondità, perché un errore futuro in una di
 # esse potrebbe altrimenti diventare visibile all'esterno.
-<FilesMatch "^(auth|geo_lib|diary_lib|news_lib|ai_lib|table_lib)\.php$">
+<FilesMatch "^(auth|percorsi|geo_lib|diary_lib|ai_lib|table_lib)\.php$">
     Require all denied
 </FilesMatch>
 <Files "crontab.txt">

@@ -1,5 +1,6 @@
 #!/usr/bin/env php
 <?php
+require_once __DIR__ . '/percorsi.php';
 if (php_sapi_name() !== 'cli') { http_response_code(403); exit; }
 
 /**
@@ -8,7 +9,7 @@ if (php_sapi_name() !== 'cli') { http_response_code(403); exit; }
  * poi da quella pagina scarica l'immagine reale e la salva in /fdbphotos/{HEX}.jpg
  */
 
-$dbPath = __DIR__ . '/events.db';
+$dbPath = EVENTS_DB_PATH;
 $photosDir = __DIR__ . '/fdbphotos';
 
 if (!is_dir($photosDir)) {
@@ -131,6 +132,20 @@ $total = count($hexes);
 $downloaded = 0;
 $skipped = 0;
 $failed = 0;
+$rinviati = 0;
+
+// Gli hex che FlightDB non ha: si ritentano dopo RITENTA_GIORNI, non a ogni
+// giro. Prima 574 contatti senza foto venivano richiesti a flightdb.net quattro
+// volte al giorno, con due richieste ciascuno, e il log cresceva di ~2.300
+// righe «Nessuna foto» a giro. La memoria sta accanto alle foto, in un file
+// scritto una volta per giro e solo se cambia.
+const RITENTA_GIORNI = 30;
+$fileMancanti = $photosDir . '/.mancanti.json';
+$mancanti = json_decode((string)@file_get_contents($fileMancanti), true);
+$mancanti = is_array($mancanti) ? $mancanti : [];
+$mancantiPrima = $mancanti;
+$oggi = gmdate('Y-m-d');
+$soglia = gmdate('Y-m-d', time() - RITENTA_GIORNI * 86400);
 
 foreach ($hexes as $hex) {
     $targetFile = $photosDir . '/' . strtoupper($hex) . '.jpg';
@@ -138,26 +153,22 @@ foreach ($hexes as $hex) {
     // Salta se già esistente
     if (file_exists($targetFile) && filesize($targetFile) > 0) {
         $skipped++;
+        unset($mancanti[$hex]);
+        continue;
+    }
+    // Gia' cercata da poco senza successo: si riprova piu' avanti
+    if (isset($mancanti[$hex]) && $mancanti[$hex] > $soglia) {
+        $rinviati++;
         continue;
     }
 
     $photoPageUrl = getFirstPhotoLinkFromFlightDB($hex);
-    if (!$photoPageUrl) {
-        echo "Nessuna foto trovata per $hex\n";
-        $failed++;
-        continue;
-    }
-
-    $imageUrl = getImageUrlFromPhotoPage($photoPageUrl);
-    if (!$imageUrl) {
-        echo "Nessuna immagine reale per $hex (pagina: $photoPageUrl)\n";
-        $failed++;
-        continue;
-    }
-
-    $imageData = fetchUrl($imageUrl);
+    $imageUrl = $photoPageUrl ? getImageUrlFromPhotoPage($photoPageUrl) : null;
+    $imageData = $imageUrl ? fetchUrl($imageUrl) : false;
     if ($imageData === false || strlen($imageData) < 1000) {
-        echo "Download immagine fallito per $hex ($imageUrl)\n";
+        // FlightDB non ha la foto (o non e' una foto vera): niente riga di log
+        // per ciascuno, basta il conteggio nel riepilogo
+        $mancanti[$hex] = $oggi;
         $failed++;
         continue;
     }
@@ -169,7 +180,14 @@ foreach ($hexes as $hex) {
     }
 
     echo "Scaricata foto per $hex da $imageUrl\n";
+    unset($mancanti[$hex]);
     $downloaded++;
 }
 
-echo "\nRiepilogo: $total HEX processati | Scaricate: $downloaded | Già esistenti: $skipped | Fallite: $failed\n";
+// hex spariti dal database: via anche dalla memoria
+$mancanti = array_intersect_key($mancanti, array_flip($hexes));
+if ($mancanti !== $mancantiPrima) {
+    file_put_contents($fileMancanti . '.tmp', json_encode($mancanti)) !== false && rename($fileMancanti . '.tmp', $fileMancanti);
+}
+
+echo date('Y-m-d H:i') . " Foto reali (FlightDB): $total HEX | Scaricate: $downloaded | Già esistenti: $skipped | Non trovate: $failed | Rinviate: $rinviati\n";

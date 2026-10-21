@@ -1,11 +1,11 @@
 <?php
+require_once __DIR__ . '/percorsi.php';
 require_once __DIR__ . '/auth.php';
 require_once __DIR__ . '/table_lib.php'; // geojson_polygons(): stessa lettura del filtro in tabella
 auth_bootstrap();
-log_access();
 require_role('collaboratore');
 
-$dbPath = __DIR__ . '/events.db';
+$dbPath = EVENTS_DB_PATH;
 $db = new SQLite3($dbPath);
 $db->enableExceptions(true);
 $db->busyTimeout(5000);

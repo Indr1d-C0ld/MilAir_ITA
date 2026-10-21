@@ -1,7 +1,6 @@
 <?php
 require_once __DIR__ . '/auth.php';
 auth_bootstrap();
-log_access();
 
 $db = get_auth_db();
 $flashMsg = '';

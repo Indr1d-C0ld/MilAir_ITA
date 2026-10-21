@@ -1,4 +1,5 @@
 <?php
+require_once __DIR__ . '/percorsi.php';
 // Proxy per tile satellitari Copernicus Sentinel-2 (Sentinel Hub Process API).
 // Gestisce OAuth2 (client_credentials) e mette in cache su disco: le immagini
 // satellitari non cambiano nel giro di poche ore (rivisitazione Sentinel-2 ~5 giorni),
@@ -27,9 +28,11 @@ function tileToBBox($z, $x, $y) {
 }
 
 function getSentinelHubToken() {
-    $tokenCacheFile = __DIR__ . '/cache/sentinelhub_token.php';
+    // In JSON, non come file PHP da includere: la cache e' scrivibile da Apache,
+    // e un file eseguibile li' dentro sarebbe una porta aperta.
+    $tokenCacheFile = MILAIR_RAM . '/cache/sentinelhub_token.json';
     if (file_exists($tokenCacheFile)) {
-        $cached = include $tokenCacheFile;
+        $cached = json_decode((string)@file_get_contents($tokenCacheFile), true);
         if (is_array($cached) && ($cached['expires_at'] ?? 0) > time() + 30) {
             return $cached['access_token'];
         }
@@ -52,15 +55,16 @@ function getSentinelHubToken() {
 
     $cacheDir = dirname($tokenCacheFile);
     if (!is_dir($cacheDir)) mkdir($cacheDir, 0775, true);
-    $payload = "<?php\nreturn " . var_export([
+    $payload = json_encode([
         'access_token' => $data['access_token'],
         'expires_at' => time() + (int)($data['expires_in'] ?? 3000),
-    ], true) . ";\n";
+    ]);
     file_put_contents($tokenCacheFile, $payload);
+    @chmod($tokenCacheFile, 0600);
     return $data['access_token'];
 }
 
-$cacheDir = __DIR__ . "/cache/satellite/$z/$x";
+$cacheDir = MILAIR_RAM . "/cache/satellite/$z/$x";
 $cacheFile = "$cacheDir/$y.jpg";
 $maxAge = 86400; // 24 ore
 
@@ -91,7 +95,7 @@ if (!tile_rate_ok('satellite', 500)) {
  */
 function tile_rate_ok(string $bucket, int $maxPerHour): bool {
     $ip = $_SERVER['REMOTE_ADDR'] ?? 'unknown';
-    $dir = __DIR__ . '/cache/ratelimit';
+    $dir = MILAIR_RAM . '/cache/ratelimit';
     if (!is_dir($dir) && !@mkdir($dir, 0775, true)) {
         return true; // in caso di problemi sul filesystem non blocchiamo il servizio
     }
@@ -124,7 +128,7 @@ function tile_cache_evict(string $subdir, int $olderThan = 2592000): void {
     if (random_int(1, 500) !== 1) {
         return;
     }
-    $root = __DIR__ . '/cache/' . $subdir;
+    $root = MILAIR_RAM . '/cache/' . $subdir;
     if (!is_dir($root)) {
         return;
     }

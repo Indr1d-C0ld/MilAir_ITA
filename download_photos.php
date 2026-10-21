@@ -1,5 +1,6 @@
 #!/usr/bin/env php
 <?php
+require_once __DIR__ . '/percorsi.php';
 if (php_sapi_name() !== 'cli') { http_response_code(403); exit; }
 
 /**
@@ -7,7 +8,7 @@ if (php_sapi_name() !== 'cli') { http_response_code(403); exit; }
  * Da eseguire via cron, analogamente a download_silhouettes.php
  */
 
-$dbPath = __DIR__ . '/events.db';
+$dbPath = EVENTS_DB_PATH;
 $photosDir = __DIR__ . '/photos';
 
 if (!is_dir($photosDir)) {

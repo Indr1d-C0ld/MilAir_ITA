@@ -1,17 +1,30 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-Monitor ADS-B — SOLO voli militari (endpoint /v2/mil)
+Monitor ADS-B — SOLO voli militari (endpoint /v2/mil).
+
+Interroga adsb.fi ogni --interval secondi, tiene i contatti dentro il
+perimetro di polygons.json e li registra DIRETTAMENTE in events.db: evento,
+giorno distinto, riepilogo per hex (con la serie di giorni consecutivi) e
+identita'. Poi, se ha registrato qualcosa, lancia update_rarity.php e
+alert_scan.php: la rarita' e gli avvisi cambiano solo quando arrivano
+contatti nuovi, quindi non servono piu' i cron orario e ogni 5 minuti.
+
+Prima i contatti passavano da un CSV (mil.csv) che csv_to_db.py rileggeva per
+intero ogni 5 minuti, riscrivendo ogni volta migliaia di righe gia' importate
+(16.556 aerei aggiornati per importare un solo evento nuovo). Ora ogni
+contatto si scrive una volta, quando arriva, in una sola transazione.
 """
 
 import argparse
-import csv
 import datetime as dt
 import json
 import os
 import sys
 import time
 import fcntl
+import sqlite3
+import subprocess
 from dataclasses import dataclass
 from typing import Dict, List, Optional, Tuple, Iterable
 
@@ -157,73 +170,184 @@ def api_rate_guard():
         f.flush()
         fcntl.flock(f, fcntl.LOCK_UN)
 
-def append_seen_csv(csv_path: str, rows: List[dict]) -> None:
-    fieldnames = [
-        "first_seen_utc", "hex", "callsign", "reg",
-        "model_t", "lat", "lon", "alt_ft", "gs_kt",
-        "squawk", "ground", "category"
-    ]
-    must_write_header = not os.path.isfile(csv_path)
-    if not must_write_header:
-        # Migrazione automatica: se lo schema del CSV esistente non combacia (es. dopo
-        # l'aggiunta della colonna 'category'), il file viene ruotato invece di
-        # rischiare di disallineare le colonne delle righe già scritte con quelle nuove
-        # (il file non viene mai troncato da csv_to_db.py, quindi resterebbe corrotto
-        # fino alla prossima rotazione manuale dei log).
-        try:
-            with open(csv_path, "r", encoding="utf-8") as f:
-                existing_header = f.readline().strip().split(",")
-            if existing_header != fieldnames:
-                backup_path = csv_path + ".pre-" + dt.datetime.now().strftime("%Y%m%d%H%M%S") + ".bak"
-                os.rename(csv_path, backup_path)
-                print(f"[INFO] Schema CSV cambiato: vecchio file archiviato in {backup_path}", file=sys.stderr)
-                must_write_header = True
-        except Exception as e:
-            print(f"[WARN] Verifica header CSV fallita: {e}", file=sys.stderr)
-    try:
-        with open(csv_path, "a", newline="", encoding="utf-8") as f:
-            wr = csv.DictWriter(f, fieldnames=fieldnames)
-            if must_write_header:
-                wr.writeheader()
-            wr.writerows(rows)
-    except Exception as e:
-        print(f"[WARN] Scrittura CSV fallita: {e}", file=sys.stderr)
+def percorso_dati(nome: str) -> str:
+    """Dove sta un database: MILAIR_DATI, /var/lib/milair, o la cartella dello
+    script (le stesse regole di percorsi.php)."""
+    base = os.environ.get("MILAIR_DATI") or ("/var/lib/milair" if os.path.isdir("/var/lib/milair")
+                                              else os.path.dirname(os.path.abspath(__file__)))
+    return os.path.join(base, nome)
 
-def make_links(ac: Aircraft) -> List[str]:
-    links = []
-    if ac.hex:
-        links.append(f"[ADSB.fi](https://globe.adsb.fi/?icao={ac.hex})")
-        links.append(f"[ADSB Exchange](https://globe.adsbexchange.com/?icao={ac.hex})")
-        links.append(f"[Planespotters](https://www.planespotters.net/hex/{ac.hex})")
-    if ac.flight:
-        links.append(f"[FlightAware](https://www.flightaware.com/it-IT/flight/{ac.flight})")
-    if ac.reg:
-        links.append(f"[AirHistory](https://www.airhistory.net/marks-all/{ac.reg})")
-        links.append(f"[JetPhotos](https://www.jetphotos.com/registration/{ac.reg})")
-    return links
+
+SCHEMA = """
+    CREATE TABLE IF NOT EXISTS events (
+        first_seen_utc TEXT, hex TEXT, callsign TEXT, reg TEXT, model_t TEXT,
+        lat REAL, lon REAL, alt_ft INTEGER, gs_kt REAL, squawk TEXT, ground TEXT,
+        category TEXT,
+        PRIMARY KEY (first_seen_utc, hex)
+    );
+    CREATE TABLE IF NOT EXISTS aircraft (
+        hex TEXT PRIMARY KEY,
+        first_seen_utc TEXT NOT NULL,
+        last_seen_utc TEXT NOT NULL,
+        seen_count INTEGER DEFAULT 0,
+        max_consecutive_days INTEGER DEFAULT 0,
+        callsign TEXT, reg TEXT, model_t TEXT,
+        lat REAL, lon REAL, alt_ft INTEGER, gs_kt REAL, squawk TEXT, ground TEXT,
+        category TEXT
+    );
+    CREATE TABLE IF NOT EXISTS daily_hex (
+        hex TEXT, date TEXT, PRIMARY KEY (hex, date)
+    );
+    CREATE TABLE IF NOT EXISTS aircraft_identity (
+        hex TEXT, callsign TEXT, reg TEXT, model_t TEXT,
+        first_seen_utc TEXT, last_seen_utc TEXT,
+        PRIMARY KEY (hex, callsign, reg)
+    );
+    CREATE TABLE IF NOT EXISTS notes (
+        hex TEXT PRIMARY KEY, note TEXT
+    );
+    -- La chiave primaria di events e' (first_seen_utc, hex): copre le query
+    -- per intervallo di date, ma NON quelle per solo hex (track.php,
+    -- heatmap.php?hex=..., il Diario).
+    CREATE INDEX IF NOT EXISTS idx_events_hex ON events(hex);
+"""
+
+
+def apri_db(path: str) -> sqlite3.Connection:
+    # timeout=30: update_rarity.php e le pagine web possono tenere il lock per
+    # qualche istante. Journal classico (non WAL): il database lo scrivono sia
+    # questo processo sia Apache, e i file -wal/-shm resterebbero con il
+    # proprietario sbagliato.
+    conn = sqlite3.connect(path, timeout=30)
+    conn.execute("PRAGMA journal_mode=DELETE")
+    conn.execute("PRAGMA synchronous=NORMAL")
+    conn.executescript(SCHEMA)
+    for table in ("events", "aircraft"):
+        cols = [r[1] for r in conn.execute(f"PRAGMA table_info({table})")]
+        if "category" not in cols:
+            conn.execute(f"ALTER TABLE {table} ADD COLUMN category TEXT")
+    conn.commit()
+    return conn
+
+
+def serie_massima(date: List[str]) -> int:
+    """La serie piu' lunga di giorni consecutivi, da date ISO in ordine."""
+    if not date:
+        return 0
+    massima = attuale = 1
+    for prima, dopo in zip(date, date[1:]):
+        if (dt.date.fromisoformat(dopo) - dt.date.fromisoformat(prima)).days == 1:
+            attuale += 1
+            massima = max(massima, attuale)
+        else:
+            attuale = 1
+    return massima
+
+
+def registra(conn: sqlite3.Connection, righe: List[dict]) -> int:
+    """Scrive i contatti nuovi, in una transazione. Le stesse regole del vecchio
+    csv_to_db.py, applicate una volta sola per riga. Ritorna gli eventi nuovi."""
+    nuovi = 0
+    cur = conn.cursor()
+    for r in righe:
+        ts, hx = r["first_seen_utc"], r["hex"]
+        valori = (r["callsign"] or None, r["reg"] or None, r["model_t"] or None, r["lat"], r["lon"],
+                  r["alt_ft"], r["gs_kt"], r["squawk"] or None, r["ground"], r["category"] or None)
+        callsign, reg, model, lat, lon, alt, gs, squawk, ground, category = valori
+
+        # 1. evento storico
+        cur.execute("INSERT OR IGNORE INTO events VALUES (?,?,?,?,?,?,?,?,?,?,?,?)", (ts, hx) + valori)
+        if cur.rowcount == 0:
+            continue                      # gia' registrato: niente da fare
+        nuovi += 1
+
+        # 2. giorno distinto
+        cur.execute("INSERT OR IGNORE INTO daily_hex VALUES (?,?)", (hx, ts[:10]))
+        giorno_nuovo = cur.rowcount > 0
+
+        # 3. riepilogo per hex
+        if cur.execute("SELECT 1 FROM aircraft WHERE hex = ?", (hx,)).fetchone():
+            cur.execute("""UPDATE aircraft SET last_seen_utc=?, seen_count=seen_count+?,
+                               callsign=?, reg=?, model_t=?, lat=?, lon=?, alt_ft=?, gs_kt=?, squawk=?, ground=?,
+                               category=COALESCE(?, category)
+                           WHERE hex=?""", (ts, 1 if giorno_nuovo else 0) + valori + (hx,))
+        else:
+            cur.execute("""INSERT INTO aircraft (hex, first_seen_utc, last_seen_utc, seen_count, max_consecutive_days,
+                               callsign, reg, model_t, lat, lon, alt_ft, gs_kt, squawk, ground, category)
+                           VALUES (?,?,?,1,0,?,?,?,?,?,?,?,?,?,?)""", (hx, ts, ts) + valori)
+        if giorno_nuovo:
+            date = [d for (d,) in cur.execute("SELECT date FROM daily_hex WHERE hex = ? ORDER BY date", (hx,))]
+            cur.execute("UPDATE aircraft SET max_consecutive_days=? WHERE hex=?", (serie_massima(date), hx))
+
+        # 4. identita' (hex + callsign + reg)
+        if cur.execute("SELECT 1 FROM aircraft_identity WHERE hex = ? AND callsign IS ? AND reg IS ?",
+                       (hx, callsign, reg)).fetchone():
+            cur.execute("""UPDATE aircraft_identity SET last_seen_utc = ?, model_t = ?
+                           WHERE hex = ? AND callsign IS ? AND reg IS ?""", (ts, model, hx, callsign, reg))
+        else:
+            cur.execute("""INSERT INTO aircraft_identity (hex, callsign, reg, model_t, first_seen_utc, last_seen_utc)
+                           VALUES (?, ?, ?, ?, ?, ?)""", (hx, callsign, reg, model, ts, ts))
+    conn.commit()
+    return nuovi
+
+
+def ultimi_visti(conn: sqlite3.Connection, secondi: int) -> Dict[str, float]:
+    """Gli hex registrati negli ultimi `secondi`, con l'istante: dopo un riavvio
+    del servizio il periodo di silenzio per hex riparte da qui, invece che da
+    zero (che registrava di nuovo tutti i contatti appena visti)."""
+    limite = (dt.datetime.now(dt.timezone.utc) - dt.timedelta(seconds=secondi)).strftime("%Y-%m-%d %H:%M:%S UTC")
+    visti = {}
+    for hx, ts in conn.execute("SELECT hex, MAX(first_seen_utc) FROM events WHERE first_seen_utc >= ? GROUP BY hex", (limite,)):
+        visti[hx] = dt.datetime.strptime(ts, "%Y-%m-%d %H:%M:%S UTC").replace(tzinfo=dt.timezone.utc).timestamp()
+    return visti
+
+
+def lancia_dopo(script: List[str]) -> None:
+    """Gli script da eseguire dopo una registrazione, in ordine: la rarita'
+    (update_rarity.php) e poi gli avvisi (alert_scan.php, incrementale con un
+    checkpoint sul rowid), che usano la rarita' appena calcolata. Quello che
+    stampano finisce nel giornale del servizio: tacciono se non c'e' nulla da dire."""
+    for s in script:
+        if not os.path.isfile(s):
+            continue
+        try:
+            r = subprocess.run(["nice", "-n", "10", "php", s], capture_output=True, text=True, timeout=180)
+            uscita = (r.stdout + r.stderr).strip()
+            if r.returncode != 0:
+                print(f"[WARN] {os.path.basename(s)}: uscita {r.returncode}: {uscita[:300]}", file=sys.stderr, flush=True)
+            elif uscita:
+                print(uscita[:500], flush=True)
+        except Exception as e:
+            print(f"[WARN] {os.path.basename(s)} non eseguito: {e}", file=sys.stderr, flush=True)
+
 
 def main():
+    qui = os.path.dirname(os.path.abspath(__file__))
     ap = argparse.ArgumentParser(description="Monitor ADS-B SOLO voli militari")
     ap.add_argument("--interval", type=int, default=60)
-    ap.add_argument("--csv", type=str, default="/var/www/html/milair_ita/mil.csv")
-    ap.add_argument("--mil-cooldown", type=int, default=1800)
-    ap.add_argument("--polygons-file", type=str, default="/var/www/html/milair_ita/polygons.json")
+    ap.add_argument("--db", type=str, default=percorso_dati("events.db"))
+    ap.add_argument("--mil-cooldown", type=int, default=1800,
+                    help="secondi di silenzio per hex dopo una registrazione")
+    ap.add_argument("--polygons-file", type=str, default=os.path.join(qui, "polygons.json"))
+    ap.add_argument("--dopo", type=str, default="update_rarity.php,alert_scan.php",
+                    help="script PHP (nella cartella del logger) da lanciare dopo ogni registrazione, separati da virgole")
     args = ap.parse_args()
+    dopo = [os.path.join(qui, n.strip()) for n in args.dopo.split(",") if n.strip()]
 
     polygons = load_polygons_from_geojson(args.polygons_file) if args.polygons_file else []
-    last_mil_alert: Dict[str, float] = {}
+    conn = apri_db(args.db)
+    last_mil_alert: Dict[str, float] = ultimi_visti(conn, args.mil_cooldown)
+    print(f"Monitor aerei militari — avvio {now_utc_str()}, database {args.db}, "
+          f"{len(last_mil_alert)} hex in silenzio dagli ultimi {args.mil_cooldown // 60} minuti", flush=True)
 
-    print(f"Monitor aerei (solo MIL, clean CSV) — start {now_utc_str()}")
     while True:
         t0 = time.time()
         merged = fetch_military()
-
         aircraft: List[Aircraft] = []
         for ac in merged:
             try:
                 # readsb/tar1090 non hanno un campo "ground": un aereo a terra ha
-                # alt_baro == "ground". Prima si leggeva ac["ground"], sempre assente,
-                # e la colonna ground restava NULL per tutti i contatti.
+                # alt_baro == "ground".
                 alt_raw = ac.get("alt_baro")
                 if alt_raw == "ground":
                     on_ground = True
@@ -256,40 +380,48 @@ def main():
             aircraft = [ac for ac in aircraft if ac.lat and ac.lon and in_any_polygon(ac.lat, ac.lon, polygons)]
 
         now_str = now_utc_str()
-        event_rows: List[dict] = []
-
+        righe: List[dict] = []
         for ac in aircraft:
             now_ts = time.time()
-            if now_ts - last_mil_alert.get(ac.hex, 0) < args.mil_cooldown:
+            if not ac.hex or now_ts - last_mil_alert.get(ac.hex, 0) < args.mil_cooldown:
                 continue
-
-            # "" solo per i valori assenti: con `x or ""` anche quota 0 ft e
-            # velocità 0 kt (valori validi) diventavano vuoti.
-            def blank(v):
-                return "" if v is None else v
-
-            row = {
+            # None solo per i valori assenti: quota 0 ft e velocita' 0 kt sono validi
+            righe.append({
                 "first_seen_utc": now_str, "hex": ac.hex,
                 "callsign": ac.flight, "reg": ac.reg or "",
                 "model_t": ac.model_t or "",
-                "lat": blank(ac.lat), "lon": blank(ac.lon),
-                "alt_ft": blank(ac.alt_baro), "gs_kt": blank(ac.gs),
-                "squawk": ac.squawk or "", "ground": blank(ac.ground),
+                "lat": ac.lat, "lon": ac.lon,
+                "alt_ft": ac.alt_baro, "gs_kt": ac.gs,
+                "squawk": ac.squawk or "",
+                "ground": None if ac.ground is None else str(ac.ground),
                 "category": ac.category or "",
-            }
-            event_rows.append(row)
-
-            # (stampa a console)
-            print(f"MIL HEX:{ac.hex} FLT:{ac.flight or '-'} REG:{ac.reg or '-'}")
+            })
             last_mil_alert[ac.hex] = now_ts
 
-        if event_rows:
-            append_seen_csv(args.csv, event_rows)
+        if righe:
+            try:
+                nuovi = registra(conn, righe)
+                if nuovi:
+                    print(f"{nuovi} contatti registrati: " + ", ".join(f"{r['hex']} {r['callsign'] or '-'}" for r in righe[:8])
+                          + (" …" if len(righe) > 8 else ""), flush=True)
+                    lancia_dopo(dopo)
+            except sqlite3.Error as e:
+                conn.rollback()
+                # non persi: tolti dal silenzio, si ritentano al giro successivo
+                for r in righe:
+                    last_mil_alert.pop(r["hex"], None)
+                print(f"[WARN] Scrittura su database fallita, riprovo al prossimo giro: {e}", file=sys.stderr, flush=True)
+
+        # pulizia: hex in silenzio scaduti, perche' il dizionario non cresca senza fine
+        soglia = time.time() - args.mil_cooldown
+        for hx in [h for h, t in last_mil_alert.items() if t < soglia]:
+            del last_mil_alert[hx]
 
         time.sleep(max(1, int(round(args.interval - (time.time() - t0)))))
+
 
 if __name__ == "__main__":
     try:
         main()
     except KeyboardInterrupt:
-        print("[INFO] Interrotto dall'utente.")
+        pass

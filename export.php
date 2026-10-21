@@ -1,4 +1,5 @@
 <?php
+require_once __DIR__ . '/percorsi.php';
 // export.php - Esporta in CSV (o in versione stampabile) esattamente le righe che
 // la tabella di index.php mostra con gli stessi parametri: stessa pipeline
 // (table_lib.php), quindi stessi filtri, pulsanti rapidi, correzioni manuali,
@@ -6,9 +7,11 @@
 require_once __DIR__ . '/auth.php';
 require_once __DIR__ . '/table_lib.php';
 auth_bootstrap();
-log_access();
+// Solo dopo il login: un export ricalcola la tabella intera, senza paginazione,
+// e i crawler ne chiedevano migliaia al giorno permutando filtri e ordinamenti.
+require_role('collaboratore');
 
-$dbPath = __DIR__ . '/events.db';
+$dbPath = EVENTS_DB_PATH;
 $format = ($_GET['format'] ?? 'csv') === 'pdf' ? 'pdf' : 'csv';
 $params = table_params($_GET);
 

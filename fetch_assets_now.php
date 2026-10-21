@@ -9,7 +9,6 @@
  */
 require_once __DIR__ . '/auth.php';
 auth_bootstrap();
-log_access();
 
 header('Content-Type: application/json; charset=utf-8');
 

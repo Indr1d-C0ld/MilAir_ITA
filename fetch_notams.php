@@ -1,4 +1,5 @@
 <?php
+require_once __DIR__ . '/percorsi.php';
 if (php_sapi_name() !== 'cli') { http_response_code(403); exit; }
 
 /**
@@ -13,7 +14,7 @@ if (php_sapi_name() !== 'cli') { http_response_code(403); exit; }
  * Dati per gentile concessione di notaminfo.com — https://notaminfo.com/ITALYMAP
  */
 
-$dbPath = __DIR__ . '/events.db';
+$dbPath = EVENTS_DB_PATH;
 $sourceUrl = 'https://notaminfo.com/ITALYMAP';
 $logPrefix = '[' . date('Y-m-d H:i:s') . ']';
 
@@ -92,7 +93,6 @@ if ($html === false) {
 }
 
 $calls = extractNotamCalls($html);
-echo "$logPrefix Trovate " . count($calls) . " call notam() nella pagina.\n";
 if (count($calls) === 0) {
     echo "$logPrefix Nessun dato estratto, la struttura della pagina sorgente potrebbe essere cambiata. Interrompo senza toccare la cache esistente.\n";
     exit(1);
@@ -152,11 +152,11 @@ foreach ($calls as $argsStr) {
     $rows[] = [$id, $lat, $lng, $areaType, $radiusNm, $polygonJson, $reference, $meaning, $qcode, $text, $validity, $fl, $tops];
 }
 
-echo "$logPrefix Analizzate " . count($rows) . " voci valide (" . $skipped . " scartate).\n";
 
-// Scrittura con BEGIN IMMEDIATE, attesa lunga e fino a 3 tentativi: alle :00
-// girano anche csv_to_db.py e update_rarity.php e nei giorni scorsi un'esecuzione
-// su sei finiva con "database is locked" (cache NOTAM non aggiornata per 3 ore).
+// Scrittura con BEGIN IMMEDIATE, attesa lunga e fino a 3 tentativi (il logger o
+// una pagina web possono tenere il lock per qualche istante). Si scrivono solo le
+// voci nuove, cambiate o sparite: prima l'intera cache (~650 voci con i testi)
+// veniva cancellata e riscritta ogni 3 ore anche se i NOTAM erano gli stessi.
 $saved = false;
 for ($attempt = 1; $attempt <= 3 && !$saved; $attempt++) {
     $db = null;
@@ -183,24 +183,49 @@ for ($attempt = 1; $attempt <= 3 && !$saved; $attempt++) {
 
         // IMMEDIATE: il lock di scrittura si prende subito, dove busyTimeout è
         // rispettato (vedi update_rarity.php per la storia completa).
-        $db->exec('BEGIN IMMEDIATE');
-        $db->exec('DELETE FROM notams_cache');
-        $stmt = $db->prepare("INSERT INTO notams_cache
-            (id, lat, lon, area_type, radius_nm, polygon_json, reference, meaning, qcode, notam_text, validity, fl_lower, fl_upper)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)");
-        foreach ($rows as $r) {
-            for ($i = 0; $i < count($r); $i++) {
-                $stmt->bindValue($i + 1, $r[$i]);
-            }
-            $stmt->execute();
-            $stmt->reset();
+        // Che cosa c'e' gia', confrontato per id sugli stessi campi che si scrivono
+        $colonne = 'id, lat, lon, area_type, radius_nm, polygon_json, reference, meaning, qcode, notam_text, validity, fl_lower, fl_upper';
+        $esistenti = [];
+        $res = $db->query("SELECT $colonne FROM notams_cache");
+        while ($e = $res->fetchArray(SQLITE3_NUM)) {
+            $esistenti[(string)$e[0]] = serialize(array_map(fn($v) => $v === null ? null : (string)$v, $e));
         }
-        $stmt->close();
-        $db->exec('COMMIT');
-        $saved = true;
+        $res->finalize();
+        $nuovi = [];
+        foreach ($rows as $r) {
+            $nuovi[(string)$r[0]] = $r;
+        }
+        $daScrivere = array_filter($nuovi, fn($r, $id) => ($esistenti[$id] ?? null)
+            !== serialize(array_map(fn($v) => $v === null ? null : (string)$v, $r)), ARRAY_FILTER_USE_BOTH);
+        $daTogliere = array_diff_key($esistenti, $nuovi);
 
-        echo "$logPrefix Cache NOTAM aggiornata: " . count($rows) . " voci salvate"
-            . ($attempt > 1 ? " (tentativo $attempt)" : '') . ".\n";
+        if ($daScrivere || $daTogliere) {
+            $db->exec('BEGIN IMMEDIATE');
+            $del = $db->prepare("DELETE FROM notams_cache WHERE id = ?");
+            foreach (array_keys($daTogliere) as $id) {
+                $del->bindValue(1, $id);
+                $del->execute();
+                $del->reset();
+            }
+            $stmt = $db->prepare("INSERT OR REPLACE INTO notams_cache ($colonne) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)");
+            foreach ($daScrivere as $r) {
+                for ($i = 0; $i < count($r); $i++) {
+                    $stmt->bindValue($i + 1, $r[$i]);
+                }
+                $stmt->execute();
+                $stmt->reset();
+            }
+            $stmt->close();
+            $db->exec('COMMIT');
+        }
+        $saved = true;
+        // L'ora del controllo riuscito, in RAM: la mappa mostra questa, non la
+        // data dell'ultima voce cambiata (che ora resta quella della scrittura)
+        @mkdir(MILAIR_RAM . '/cache', 0775, true);
+        @touch(MILAIR_RAM . '/cache/notams-controllati');
+
+        echo "$logPrefix NOTAM: " . count($rows) . " in vigore, " . count($daScrivere) . " nuovi o cambiati, "
+            . count($daTogliere) . " tolti, $skipped voci scartate" . ($attempt > 1 ? " (tentativo $attempt)" : '') . ".\n";
     } catch (Exception $e) {
         if ($db) { try { $db->exec('ROLLBACK'); } catch (Exception $ignored) {} }
         echo "$logPrefix Errore database (tentativo $attempt/3): " . $e->getMessage() . "\n";

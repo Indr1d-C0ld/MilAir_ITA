@@ -2,7 +2,7 @@
 // geo_lib.php - Nazionalità, operatore e pattern matching: implementazioni CANONICHE.
 //
 // Quarta eccezione deliberata alla convenzione "nessun include condiviso" di
-// questo progetto (dopo auth.php, news_lib.php e diary_lib.php), e l'unica nata
+// questo progetto (dopo auth.php e diary_lib.php), e l'unica nata
 // da un bug vero anziché da una scelta di comodo.
 //
 // Perché: queste funzioni erano duplicate in 5 file (index.php, map.php,

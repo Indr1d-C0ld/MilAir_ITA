@@ -1,5 +1,6 @@
 #!/usr/bin/env php
 <?php
+require_once __DIR__ . '/percorsi.php';
 if (php_sapi_name() !== 'cli') { http_response_code(403); exit; }
 
 /**
@@ -7,7 +8,7 @@ if (php_sapi_name() !== 'cli') { http_response_code(403); exit; }
  * Usa URL https://doc8643.com/static/img/aircraft/3D/MODELLO.jpg
  */
 
-$dbPath = __DIR__ . '/events.db';
+$dbPath = EVENTS_DB_PATH;
 $drawingsDir = __DIR__ . '/drawings';
 
 if (!is_dir($drawingsDir)) {

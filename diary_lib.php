@@ -12,7 +12,7 @@ require_once __DIR__ . '/geo_lib.php';
 // sono azioni riservate all'admin.
 //
 // Terza eccezione deliberata alla convenzione "nessun include condiviso" di
-// questo progetto (dopo auth.php e news_lib.php): diary.php è l'unico
+// questo progetto (dopo auth.php): diary.php è l'unico
 // consumatore, ma tenere schema/aggregazione in un solo posto evita che
 // un domani si debba ritoccare la stessa logica in più file.
 
@@ -70,11 +70,11 @@ function diary_get(SQLite3 $db, string $day): ?array {
 }
 /**
  * Aggregati deterministici del giorno. Sola lettura di events/rarity_cache.
- * A differenza di FlightAnom, operatore e nazionalità non sono colonne: si
+ * Operatore e nazionalità non sono colonne del database: si
  * ricalcolano riga per riga con le funzioni sopra (stesso approccio già
  * usato in stats.php). Gli hex sono inclusi così la pagina (e la narrativa
  * IA) possono linkare a index.php?hex=... (non esiste un permalink per
- * singolo avvistamento in questo progetto, a differenza di FlightAnom).
+ * singolo avvistamento in questo progetto).
  */
 function diary_build_digest(SQLite3 $db, string $day): array {
     [$a, $b] = diary_day_bounds_utc($day);
@@ -168,9 +168,9 @@ function diary_build_digest(SQLite3 $db, string $day): array {
     usort($repeatAircraft, fn($x, $y) => $y['n'] <=> $x['n']);
     $repeatAircraft = array_slice($repeatAircraft, 0, 20);
 
-    // Contatti rari avvistati oggi (Mythic/Legendary secondo rarity_cache):
-    // equivalente concettuale dell'"alta confidenza" di FlightAnom, qui non
-    // esistendo un punteggio di confidenza per singolo evento.
+    // Contatti rari avvistati oggi (Mythic/Legendary secondo rarity_cache): non
+    // esistendo un punteggio di confidenza per singolo evento, e' la rarita' a
+    // dire che cosa merita attenzione.
     $rareContacts = [];
     if (!empty($hexCounts)) {
         $placeholders = implode(',', array_fill(0, count($hexCounts), '?'));

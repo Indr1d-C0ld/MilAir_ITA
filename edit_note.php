@@ -1,10 +1,10 @@
 <?php
+require_once __DIR__ . '/percorsi.php';
 require_once __DIR__ . '/auth.php';
 auth_bootstrap();
-log_access();
 require_role('collaboratore');
 
-$dbPath = __DIR__ . '/events.db';
+$dbPath = EVENTS_DB_PATH;
 $hex = trim($_GET['hex'] ?? $_POST['hex'] ?? '');
 if (!$hex) { die("HEX mancante."); }
 // Pagina da cui si è arrivati (con i suoi filtri e la sua pagina): prima dopo il

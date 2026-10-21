@@ -1,10 +1,10 @@
 <?php
+require_once __DIR__ . '/percorsi.php';
 require_once __DIR__ . '/auth.php';
 require_once __DIR__ . '/geo_lib.php';
 auth_bootstrap();
-log_access();
 
-$dbPath = __DIR__ . '/events.db';
+$dbPath = EVENTS_DB_PATH;
 $db = new SQLite3($dbPath, SQLITE3_OPEN_READONLY);
 $db->busyTimeout(5000);
 
@@ -91,6 +91,12 @@ if ($notamsTableExists) {
             $notamUpdatedAt = $row['fetched_at'];
         }
     }
+}
+// L'ultimo controllo riuscito (fetch_notams.php lo segna in RAM); dopo un
+// riavvio, finche' non ne arriva uno, la data dell'ultima voce cambiata.
+$notamControllo = @filemtime(MILAIR_RAM . '/cache/notams-controllati');
+if ($notamControllo && $notamAreas) {
+    $notamUpdatedAt = gmdate('Y-m-d H:i:s', $notamControllo);
 }
 $notamAreasJson = json_encode($notamAreas);
 ?>

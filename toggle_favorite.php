@@ -1,10 +1,10 @@
 <?php
+require_once __DIR__ . '/percorsi.php';
 require_once __DIR__ . '/auth.php';
 auth_bootstrap();
-log_access();
 require_role('collaboratore');
 
-$dbPath = __DIR__ . '/events.db';
+$dbPath = EVENTS_DB_PATH;
 $isAjax = isset($_POST['ajax']) || isset($_GET['ajax']);
 
 if ($_SERVER['REQUEST_METHOD'] !== 'POST') {

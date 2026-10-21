@@ -1,10 +1,12 @@
 # MilAir ITA
 
-Piattaforma web self-hosted per il monitoraggio in tempo reale del traffico aereo **militare** sopra l'Italia, basata su dati ADS-B pubblici. Raccoglie, archivia e visualizza su una mappa interattiva i contatti radar dei velivoli militari, con un sistema di regole/alert personalizzabili, statistiche, rassegna stampa correlata e gestione utenti multi-ruolo.
+Piattaforma web self-hosted per il monitoraggio in tempo reale del traffico aereo **militare** sopra l'Italia, basata su dati ADS-B pubblici. Raccoglie, archivia e visualizza su una mappa interattiva i contatti radar dei velivoli militari, con un sistema di regole/alert personalizzabili, statistiche, un diario giornaliero e gestione utenti multi-ruolo.
 
 Il progetto è nato come strumento "per aeroappassionati" (spotting/monitoraggio open-source di traffico aereo militare, pratica comune e basata su dati già pubblici) e viene condiviso qui affinché altri possano installarlo, studiarlo e migliorarlo.
 
 > ⚠️ Questo repository contiene **solo il codice sorgente**. Database, log, sessioni, cache e immagini scaricate automaticamente (foto/silhouette/disegni) **non sono inclusi**: vengono creati e popolati automaticamente al primo avvio e durante l'uso normale (vedi [Installazione](#installazione)).
+>
+> Il progetto è pensato per stare leggero su un piccolo server con SSD: i database si scrivono solo quando cambia davvero qualcosa, sessioni e cache stanno in RAM, le visite anonime non scrivono nulla.
 
 ---
 
@@ -27,13 +29,15 @@ Il progetto è nato come strumento "per aeroappassionati" (spotting/monitoraggio
 
 ## Come funziona
 
-Il sistema si basa su una pipeline in tre fasi, pensata per essere semplice e robusta anche su un piccolo VPS:
+Il sistema si basa su una pipeline semplice, pensata per essere robusta anche su un piccolo VPS e per non consumare il disco:
 
-1. **Raccolta** — [`flight_mil_ita.py`](flight_mil_ita.py) interroga periodicamente l'endpoint pubblico `/v2/mil` di [adsb.fi](https://adsb.fi) (solo velivoli identificati come militari), filtra i contatti tramite il perimetro geografico definito in [`polygons.json`](polygons.json) (confini Italia, da Natural Earth) e appende ogni nuovo contatto a un file CSV (`mil.csv`).
-2. **Importazione** — [`csv_to_db.py`](csv_to_db.py), eseguito ogni 5 minuti via cron, importa il CSV nel database SQLite `events.db`, deduplica i contatti e aggiorna le statistiche di "serie" (giorni consecutivi di avvistamento per ogni velivolo).
-3. **Presentazione** — l'applicazione PHP legge `events.db` e mostra i contatti su una mappa [Leaflet](https://leafletjs.com/), con arricchimento progressivo in background: rarità composita dei contatti ([`update_rarity.php`](update_rarity.php), ispirata ai loot table dei GdR — combina frequenza avvistamenti, rarità dell'operatore/forza aerea e rarità della nazionalità in 6 fasce a soglie fisse, non ricalcolate sulla popolazione corrente), foto/silhouette/disegni tecnici del modello (scaricati da fonti pubbliche), overlay meteo/satellite, NOTAM, alert e rassegna stampa correlata.
+1. **Raccolta e registrazione** — [`flight_mil_ita.py`](flight_mil_ita.py), servizio systemd, interroga ogni minuto l'endpoint pubblico `/v2/mil` di [adsb.fi](https://adsb.fi) (solo velivoli identificati come militari), filtra i contatti con il perimetro di [`polygons.json`](polygons.json) (confini Italia, da Natural Earth) e li scrive **direttamente** nel database SQLite `events.db`: evento storico, giorno distinto, riepilogo per hex con la serie di giorni consecutivi, identità. Ogni contatto si scrive una volta, quando arriva, in una sola transazione; lo stesso hex resta poi in silenzio per 30 minuti.
+2. **Dopo ogni registrazione** — il logger lancia [`update_rarity.php`](update_rarity.php) (rarità composita dei contatti, ispirata ai loot table dei GdR: frequenza avvistamenti, rarità dell'operatore/forza aerea e della nazionalità, in 6 fasce a soglie fisse) e [`alert_scan.php`](alert_scan.php) (notifiche). Rarità e avvisi cambiano solo quando arrivano contatti nuovi, quindi non servono cron che girino a vuoto; la rarità scrive solo le righe cambiate.
+3. **Presentazione** — l'applicazione PHP legge `events.db` e mostra i contatti su una mappa [Leaflet](https://leafletjs.com/), con arricchimento in background: foto/silhouette/disegni tecnici del modello (scaricati da fonti pubbliche una volta per notte), overlay meteo/satellite, NOTAM, alert e diario.
 
 Tutta la logica di identificazione "è un velivolo militare" avviene lato adsb.fi; l'applicazione si occupa di storicizzazione, arricchimento, visualizzazione e notifica.
+
+Fino all'ottobre 2026 i contatti passavano da un CSV (`mil.csv`) che `csv_to_db.py` rileggeva per intero ogni 5 minuti: per importare un solo evento nuovo riscriveva migliaia di righe già presenti. La pipeline attuale ha tolto quel passaggio.
 
 ## Funzionalità principali
 
@@ -42,51 +46,47 @@ Tutta la logica di identificazione "è un velivolo militare" avviene lato adsb.f
 - **Motore di regole personalizzate** ([`rules.php`](rules.php)) per evidenziare righe, mappare nazionalità, marcare contatti (es. ❓ = in watchlist) e generare note automatiche in base a pattern su hex/reg/callsign/modello.
 - **Sistema di alert** ([`alert_scan.php`](alert_scan.php), eseguito ogni 5 minuti) che genera notifiche per: contatti in watchlist che ricompaiono, squawk di emergenza (7500/7600/7700), contatti mai visti prima con rarità *Mythic*/*Legendary* ([`update_rarity.php`](update_rarity.php)), corrispondenze con le regole personalizzate, e regole di notifica su contatti non ancora visti (hex/callsign/reg attesi).
 - **Statistiche e heatmap** ([`stats.php`](stats.php), [`heatmap.php`](heatmap.php)) su nazionalità (con bandierine), modelli, frequenza dei contatti, e classifiche (forze aeree/compagnie con logo, callsign, registrazioni). Giorni e ore sono sempre quelli del calendario italiano (Europe/Rome), anche se il database memorizza gli istanti in UTC: il pulsante "Oggi" di tabella, mappa e heatmap copre il giorno di calendario, non le ultime 24 ore.
-- **Rassegna stampa correlata** ([`news.php`](news.php)): un aggregatore RSS/Atom configurabile ([`admin_feeds.php`](admin_feeds.php)) che scarica periodicamente articoli, estrae parole chiave e genera alert per le notizie pertinenti.
 - **Diario di bordo** ([`diary.php`](diary.php)): una sintesi giornaliera deterministica dei contatti (per ora, per operatore/nazionalità/modello, mezzi ricorrenti, contatti rari, squawk di emergenza, novità rispetto ai 14 giorni precedenti). Con [`diary_build.php`](diary_build.php) (cron notturno) la voce di ieri viene calcolata e **pubblicata automaticamente**; senza cron resta calcolabile e pubblicabile a mano dall'admin. Pubblica in lettura solo per i giorni effettivamente pubblicati. Supporta opzionalmente una sintesi narrativa generata da un assistente IA in esecuzione su un server [Ollama](https://ollama.com) nella propria rete locale ([`ai_lib.php`](ai_lib.php), mai un servizio cloud, sempre un passo manuale): la bozza generata va sempre rivista da un operatore.
-- **Gestione utenti multi-ruolo** ([`admin_users.php`](admin_users.php)) con log accessi ([`admin_access_log.php`](admin_access_log.php), [`admin_access_stats.php`](admin_access_stats.php)) e un modulo di richiesta accesso pubblico con approvazione manuale da parte di un admin ([`richieste.php`](richieste.php) → [`admin_richieste.php`](admin_richieste.php)).
-- **Export dati**: [`export.php`](export.php) esporta in CSV (o in versione stampabile/PDF dal browser) esattamente le righe che la tabella mostra con gli stessi parametri — filtri, pulsanti rapidi, correzioni manuali, note automatiche e ordinamento, senza paginazione — perché tabella ed export condividono la stessa pipeline ([`table_lib.php`](table_lib.php)); [`export_rules.php`](export_rules.php) esporta le regole in JSON (reimportabili da `rules.php`).
+- **Gestione utenti multi-ruolo** ([`admin_users.php`](admin_users.php)) e un modulo di richiesta accesso pubblico con approvazione manuale da parte di un admin ([`richieste.php`](richieste.php) → [`admin_richieste.php`](admin_richieste.php)). Nessun registro di ogni richiesta nel database: le visite si leggono dai log del server web.
+- **Export dati** (dopo il login): [`export.php`](export.php) esporta in CSV (o in versione stampabile/PDF dal browser) esattamente le righe che la tabella mostra con gli stessi parametri — filtri, pulsanti rapidi, correzioni manuali, note automatiche e ordinamento, senza paginazione — perché tabella ed export condividono la stessa pipeline ([`table_lib.php`](table_lib.php)); [`export_rules.php`](export_rules.php) esporta le regole in JSON (reimportabili da `rules.php`).
 
 ## Architettura
 
 ```
-┌─────────────────┐   HTTPS    ┌──────────────────┐
-│ opendata.adsb.fi │ ─────────▶│ flight_mil_ita.py │  (systemd, polling continuo)
-└─────────────────┘            └────────┬─────────┘
-                                         │ append CSV
-                                         ▼
-                                     mil.csv
-                                         │ cron */5 min
-                                         ▼
-                                  csv_to_db.py
-                                         │
-                                         ▼
-                                    events.db (SQLite)
-                                         │
-                     ┌───────────────────┼────────────────────┐
-                     ▼                   ▼                    ▼
-              index.php / map.php   alert_scan.php      stats.php / heatmap.php
-              (dashboard PHP +          (cron */5 min           (analisi)
-               Leaflet)                  → auth.db)
+┌──────────────────┐   HTTPS    ┌───────────────────┐
+│ opendata.adsb.fi │ ─────────▶ │ flight_mil_ita.py │  (systemd, ogni 60 s)
+└──────────────────┘            └─────────┬─────────┘
+                                          │ solo contatti nuovi, una transazione
+                                          ▼
+                                  events.db (SQLite)
+                                          │ dopo ogni registrazione
+                                          ├──▶ update_rarity.php (solo righe cambiate)
+                                          └──▶ alert_scan.php    (→ auth.db)
 
-              auth.php  →  auth.db  (utenti, sessioni, log accessi, alert, richieste)
-              news_lib.php → news.db (rassegna stampa RSS/Atom)
+          index.php / map.php / stats.php / heatmap.php / diary.php  (letture)
+          auth.php → auth.db (utenti, tentativi di login, alert, richieste)
 ```
 
-Tre database SQLite indipendenti, ciascuno con una responsabilità precisa:
+Due database SQLite indipendenti, ciascuno con una responsabilità precisa:
 
 | Database | Contenuto |
 |---|---|
-| `events.db` | Contatti radar storicizzati, regole, preferiti, note, cache rarità, filtri geografici |
-| `auth.db` | Utenti, tentativi di login, log accessi, alert, richieste di accesso |
-| `news.db` | Fonti RSS/Atom configurate, articoli scaricati, parole chiave |
+| `events.db` | Contatti radar storicizzati, regole, preferiti, note, cache rarità, filtri geografici, NOTAM, diario |
+| `auth.db` | Utenti, tentativi di login, alert, richieste di accesso |
 
-Tutti e tre vengono creati automaticamente (schema `CREATE TABLE IF NOT EXISTS`) al primo utilizzo — non serve alcuna migrazione manuale.
+Tutti e due vengono creati automaticamente (schema `CREATE TABLE IF NOT EXISTS`) al primo utilizzo — non serve alcuna migrazione manuale.
+
+**Dove stanno i dati** ([`percorsi.php`](percorsi.php), unico posto in cui i percorsi sono scritti): i database in `MILAIR_DATI` (`/var/lib/milair`), sessioni e cache delle tile in `MILAIR_RAM` (`/run/milair`, tmpfs: si ricreano dopo un riavvio). Se quelle cartelle non esistono si usa la cartella del codice, come nelle prime versioni. Il logger segue le stesse regole.
+
+**Cosa scrive, e quando**:
+- una visita anonima (tabella, mappa, statistiche, diario) non scrive nulla: niente sessione, niente registro;
+- il logger scrive solo quando ci sono contatti nuovi, rarità e NOTAM solo ciò che è cambiato;
+- le foto reali che FlightDB non ha si ritentano dopo 30 giorni, non a ogni giro.
 
 ## Struttura del progetto
 
 ```
-├── index.php, map.php, stats.php, heatmap.php, news.php   → pagine principali
+├── index.php, map.php, stats.php, heatmap.php             → pagine principali
 ├── auth.php, login.php, logout.php, setup.php              → autenticazione e primo avvio
 ├── admin_*.php                                              → pannelli di amministrazione
 ├── rules.php, geofilter.php, favorites.php, edit_*.php      → motore regole e personalizzazioni utente
@@ -94,22 +94,23 @@ Tutti e tre vengono creati automaticamente (schema `CREATE TABLE IF NOT EXISTS`)
 ├── track.php, save_identity.php, toggle_*.php               → API JSON usate via fetch() dal frontend
 ├── fetch_assets_now.php                                     → recupero istantaneo on-demand di un singolo asset (via fetch() da index.php)
 ├── download_*.php                                           → script CLI (cron) di arricchimento (foto/silhouette/disegni/loghi operatore)
-├── fetch_news.php, fetch_notams.php, news_lib.php           → aggregazione RSS e NOTAM
+├── fetch_notams.php                                         → NOTAM per la mappa
 ├── geo_lib.php                                              → nazionalità, operatore e pattern matching (definizioni canoniche, usate da tutte le pagine)
 ├── table_lib.php                                            → pipeline condivisa della tabella contatti (filtri, regole, ordinamento): la usano index.php ed export.php
 ├── diary.php, diary_lib.php, diary_build.php, ai_lib.php    → Diario di bordo (digest giornaliero, pubblicazione, sintesi IA locale opzionale)
 ├── satellite_tile.php, weather_tile.php                     → proxy server-side per i layer mappa opzionali (con limite per IP e cache a scadenza)
-├── flight_mil_ita.py, csv_to_db.py                          → pipeline di raccolta/importazione dati
-├── geo_secrets.php.example, map_secrets.php.example,
-│   ai_secrets.php.example                                   → template chiavi API (copiare senza ".example")
-├── crontab.txt, milair-logger.service, fix_permissions.sh   → esempi di configurazione per il deploy
+├── flight_mil_ita.py                                        → raccolta e registrazione dei contatti
+├── percorsi.php                                             → dove stanno database, sessioni e cache
+├── map_secrets.php.example, ai_secrets.php.example          → template chiavi API (copiare senza ".example")
+├── crontab.txt, milair-logger.service, milair-tmpfiles.conf,
+│   fix_permissions.sh                                       → esempi di configurazione per il deploy
 ├── style.css                                                → stile applicazione
 ├── leaflet/                                                 → libreria Leaflet + plugin (draw, heat), self-hosted
 ├── flags/                                                   → set di bandiere SVG per codice ISO (nazionalità)
 └── polygons.json                                            → confini Italia (Natural Earth, per il geofiltro)
 ```
 
-Le seguenti cartelle **non sono nel repository** (create automaticamente, vedi `.gitignore`): `cache/`, `sessions/`, `drawings/`, `fdbphotos/`, `photos/`, `silhouettes/`, `opflags/`, oltre a `*.db`, `*.log` e `mil.csv`.
+Le seguenti cartelle **non sono nel repository** (create automaticamente, vedi `.gitignore`): `drawings/`, `fdbphotos/`, `photos/`, `silhouettes/`, `opflags/`, oltre a `*.db` e `*.log`; sessioni e cache stanno in `MILAIR_RAM`.
 
 ## Requisiti
 
@@ -127,22 +128,20 @@ Le seguenti cartelle **non sono nel repository** (create automaticamente, vedi `
    cd /var/www/html/milair_ita
    ```
 
-2. **Crea il `.htaccess`** dal modello fornito. Non è versionato perché in genere va adattato al proprio deployment (per esempio per consentire l'embedding in un iframe da un'altra origine):
-   ```bash
-   cp .htaccess.example .htaccess
-   ```
+2. **Configura Apache**: copia le regole di [`.htaccess.example`](.htaccess.example) in un `.htaccess` (se il vhost ha `AllowOverride All`) oppure, meglio, in un blocco `<Directory>` della configurazione di Apache. Negano l'accesso a database, segreti, log e librerie, e chiedono ai motori di ricerca di non indicizzare.
 
 3. **Configura le chiavi API opzionali** (vedi [sezione dedicata](#configurazione-chiavi-api-opzionali)) — puoi anche saltare questo passo: l'app funziona comunque, con i soli layer opzionali disattivati.
    ```bash
-   cp geo_secrets.php.example geo_secrets.php
    cp map_secrets.php.example map_secrets.php
    ```
 
-4. **Permessi**: adatta `USER` in [`fix_permissions.sh`](fix_permissions.sh) al tuo utente di sistema, poi eseguilo (richiede sudo):
+4. **Cartelle e permessi**: adatta `USER` in [`fix_permissions.sh`](fix_permissions.sh) e in [`milair-tmpfiles.conf`](milair-tmpfiles.conf), poi (con sudo):
    ```bash
+   sudo cp milair-tmpfiles.conf /etc/tmpfiles.d/milair.conf
+   sudo systemd-tmpfiles --create /etc/tmpfiles.d/milair.conf
    sudo ./fix_permissions.sh
    ```
-   In sintesi: Apache (`www-data`) deve poter scrivere su `events.db`, `auth.db`, `mil.csv`, `cache/`, `photos/`, `fdbphotos/`, `sessions/` (quest'ultima con permessi ristretti, `770`/`660`).
+   In sintesi: i database stanno in `/var/lib/milair` (`2770`, scrivibili da Apache e dal logger), sessioni e cache in `/run/milair` (tmpfs), il codice non è scrivibile da Apache tranne le cartelle degli asset scaricati.
 
 5. **Primo avvio**: apri `https://<tuo-dominio>/setup.php` nel browser per creare il primo account amministratore. La pagina si autodisabilita in modo permanente subito dopo la creazione del primo utente (stesso pattern di WordPress/Nextcloud) e reindirizza a `login.php`.
 
@@ -154,13 +153,11 @@ Tutte le chiavi sono **facoltative**: senza di esse l'app funziona regolarmente,
 
 | File | Chiave | Funzione | Dove ottenerla |
 |---|---|---|---|
-| `geo_secrets.php` | `IPGEOLOCATION_API_KEY` | Geolocalizzazione IP nel log accessi admin | [ipgeolocation.io](https://ipgeolocation.io) (piano free) |
-| `geo_secrets.php` | `IPDATA_API_KEY` | Geolocalizzazione IP (alternativa/fallback) | [ipdata.co](https://ipdata.co) (piano free) |
 | `map_secrets.php` | `SENTINELHUB_CLIENT_ID` / `SENTINELHUB_CLIENT_SECRET` | Layer satellitare sulla mappa | [sentinel-hub.com](https://www.sentinel-hub.com) (piano free, OAuth client da creare sul [dashboard](https://apps.sentinel-hub.com/dashboard/)) |
 | `map_secrets.php` | `OPENWEATHER_API_KEY` | Layer meteo sulla mappa | [openweathermap.org/api](https://openweathermap.org/api) (piano free) |
 | `ai_secrets.php` | `AI_BASE_URL` | Sintesi narrativa IA nel Diario | Nessuna: indirizzo di un server [Ollama](https://ollama.com) nella propria rete locale, non un servizio cloud |
 
-`geo_secrets.php`, `map_secrets.php` e `ai_secrets.php` sono esclusi dal repository (`.gitignore`) e negati esplicitamente via `.htaccess`: non vengono mai serviti al browser, solo inclusi lato server.
+`map_secrets.php` e `ai_secrets.php` sono esclusi dal repository (`.gitignore`) e negati esplicitamente via `.htaccess`: non vengono mai serviti al browser, solo inclusi lato server.
 
 ## Automazioni (cron / systemd)
 
@@ -170,27 +167,24 @@ sudo cp milair-logger.service /etc/systemd/system/
 sudo systemctl daemon-reload
 sudo systemctl enable --now milair-logger
 ```
+Il logger registra i contatti e, dopo ogni registrazione, lancia `update_rarity.php` e `alert_scan.php`: rarità e avvisi non hanno bisogno di cron.
 
-**Job periodici** — aggiungi le voci di [`crontab.txt`](crontab.txt) al crontab reale (`crontab -e`), adattando il percorso se diverso da `/var/www/html/milair_ita`:
+**Job periodici** — aggiungi le voci di [`crontab.txt`](crontab.txt) al crontab reale (`crontab -e`), adattando i percorsi se diversi da `/var/www/html/milair_ita`:
 
 | Frequenza | Script | Scopo |
 |---|---|---|
-| ogni 5 min | `csv_to_db.py` | importa `mil.csv` in `events.db` |
-| ogni 5 min | `alert_scan.php` | scansiona nuovi eventi e genera alert |
-| ogni 15 min | `fetch_news.php` | scarica nuovi articoli RSS/Atom |
-| ogni ora | `update_rarity.php` | ricalcola la cache di rarità dei contatti |
-| ogni 3 ore (al minuto 7) | `fetch_notams.php` | aggiorna i NOTAM per l'overlay mappa (sfalsato rispetto ai job delle :00 che scrivono su `events.db`) |
-| ogni 6 ore | `download_silhouettes.php`, `download_photos.php`, `download_drawings.php`, `download_fdb_photos.php` | scaricano gli asset visivi mancanti per i modelli in database |
-| una volta a settimana | `download_opflags.php` | aggiorna i loghi operatore/forza aerea (VRS OperatorFlags) |
-| ogni notte alle 00:15 | `diary_build.php --publish --quiet` | calcola e pubblica automaticamente la voce di Diario di ieri |
+| ogni 3 ore (al minuto 25) | `fetch_notams.php` | aggiorna i NOTAM per l'overlay mappa (scrive solo quelli cambiati) |
+| ogni notte alle 00:15 | `diary_build.php --publish --quiet` | calcola e pubblica la voce di Diario di ieri; pota i dati di servizio di `auth.db` |
+| ogni notte alle 04:30 | `download_silhouettes.php`, `download_photos.php`, `download_drawings.php`, `download_fdb_photos.php` | scaricano gli asset visivi mancanti, uno dopo l'altro a priorità minima |
+| la domenica alle 04:50 | `download_opflags.php` | aggiorna i loghi operatore/forza aerea (VRS OperatorFlags) |
 
 ## Ruoli utente e sicurezza
 
 Tre livelli di accesso, gestiti in [`auth.php`](auth.php):
 
-- **pubblico** — nessun account, sola visione (se abilitata dalla configurazione delle pagine)
+- **pubblico** — nessun account, sola visione di tabella, mappa, statistiche e diario (l'export richiede il login)
 - **collaboratore** — editing completo (regole, note, preferiti, correzioni identità)
-- **admin** — come collaboratore + pannello utenti, log accessi, gestione feed RSS, richieste di accesso
+- **admin** — come collaboratore + pannello utenti, richieste di accesso
 
 Misure di sicurezza implementate:
 - Password con hash tramite `password_hash()`/`password_verify()` di PHP (bcrypt); lunghezza minima definita da `PASSWORD_MIN_LENGTH` in [`auth.php`](auth.php) e applicata sia lato server sia nei form — alzarla è consigliabile se il portale è esposto su internet
@@ -200,13 +194,13 @@ Misure di sicurezza implementate:
 - Ruolo e stato dell'account riletti dal database a ogni richiesta: disattivare o retrocedere un utente ha effetto immediato anche sulle sessioni già aperte; lo stesso vale per un cambio o reset della password, che chiude tutte le altre sessioni aperte con la vecchia (utile se un account è compromesso)
 - Redirect dopo il login e link di ritorno ("Annulla", `return=`) limitati alle pagine dell'applicazione (`safe_local_url()`): niente open redirect verso siti esterni né link `javascript:`
 - Gli endpoint chiamati dal frontend via `fetch()` rispondono `401`/`403` in JSON invece di reindirizzare al login: una scheda rimasta aperta dopo la scadenza della sessione smette di interrogare il server
-- Sessioni in directory dedicata, con garbage collection esplicita e scadenza dopo 12 ore di inattività (su Debian la pulizia di sistema non vedrebbe una `save_path` impostata a runtime)
-- Log di accessi e tentativi di login in `auth.db`, con conservazione limitata nel tempo (vedi le costanti `*_RETENTION_DAYS` in [`auth.php`](auth.php))
+- Sessioni pigre (nascono solo al login o quando una pagina chiede un gettone CSRF: una visita anonima non apre sessioni), in una directory dedicata in RAM, con garbage collection esplicita e scadenza dopo 12 ore di inattività (su Debian la pulizia di sistema non vedrebbe una `save_path` impostata a runtime)
+- Tentativi di login in `auth.db`, con conservazione limitata nel tempo (vedi le costanti `*_RETENTION_DAYS` in [`auth.php`](auth.php)); nessun registro di ogni richiesta, nessuna geolocalizzazione degli IP presso servizi esterni
 - Modulo pubblico di richiesta accesso con honeypot anti-bot e limite per IP, soggetto ad approvazione manuale di un admin
 - Proxy dei layer mappa con limite di chiamate per IP: gli endpoint sono pubblici (la mappa è consultabile senza login) ma non possono essere usati per prosciugare la quota delle API esterne
 - Header di sicurezza HTTP (`X-Content-Type-Options`, `X-Frame-Options`, `Referrer-Policy`, `Strict-Transport-Security`, `Permissions-Policy`, `Content-Security-Policy: frame-ancestors`)
 - Messaggi d'errore generici verso l'utente, dettaglio tecnico solo nel log del server
-- `.htaccess` nega l'accesso HTTP diretto a: file di segreti, database SQLite, file `.json`/`.csv`/`.bak`, log, script CLI, librerie di sole funzioni e cartella `cache/`
+- Le regole di Apache negano l'accesso HTTP diretto a: file di segreti, database SQLite, file `.json`/`.csv`/`.bak`, log, script CLI e librerie di sole funzioni, e chiedono di non indicizzare (`X-Robots-Tag: noindex, nofollow`): le combinazioni di filtri della tabella sono infinite, e i crawler le percorrevano tutte
 
 ## Fonti dati e crediti
 

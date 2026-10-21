@@ -1,14 +1,14 @@
 <?php
+require_once __DIR__ . '/percorsi.php';
 // diary.php - Diario di bordo: sintesi giornaliere dei contatti.
 // Pubblico in lettura (solo voci pubblicate). Rigenerazione digest,
 // pubblicazione e narrativa assistita da IA: riservate all'admin.
 require_once __DIR__ . '/auth.php';
 auth_bootstrap();
-log_access();
 require_once __DIR__ . '/diary_lib.php';
 require_once __DIR__ . '/ai_lib.php';
 
-$dbPath = __DIR__ . '/events.db';
+$dbPath = EVENTS_DB_PATH;
 $db = new SQLite3($dbPath);
 $db->enableExceptions(true);
 $db->busyTimeout(5000);

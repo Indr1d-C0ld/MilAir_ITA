@@ -1,6 +1,7 @@
 <?php
+require_once __DIR__ . '/percorsi.php';
 /**
- * Nucleo condiviso di autenticazione, autorizzazione, CSRF e logging accessi
+ * Nucleo condiviso di autenticazione, autorizzazione e CSRF
  * per l'intera piattaforma MILAIR ITA.
  *
  * Incluso da (quasi) ogni pagina con `require_once __DIR__ . '/auth.php';` —
@@ -12,7 +13,6 @@
  * (editing completo) < 'admin' (editing + pannello di amministrazione).
  */
 
-define('AUTH_DB_PATH', __DIR__ . '/auth.db');
 
 const ROLE_RANK = ['pubblico' => 0, 'collaboratore' => 1, 'admin' => 2];
 
@@ -25,9 +25,11 @@ const ROLE_RANK = ['pubblico' => 0, 'collaboratore' => 1, 'admin' => 2];
 const PASSWORD_MIN_LENGTH = 9;
 
 // Conservazione dei dati di servizio (vedi prune_old_logs()). Valori generosi:
-// sono log di audit, la potatura serve solo a evitare crescita illimitata.
+// la potatura serve solo a evitare crescita illimitata.
 // Gli alert non letti sono esclusi dalla potatura a prescindere dall'età.
-const ACCESS_LOG_RETENTION_DAYS      = 365;
+// Il registro di ogni richiesta (access_log) non c'e' piu': scriveva una riga
+// nel database a ogni pagina vista, anche dai crawler (552.000 righe in due
+// mesi e mezzo, il 99% anonime). Le visite si leggono dai log di Apache.
 const LOGIN_ATTEMPTS_RETENTION_DAYS  = 90;
 const ALERTS_RETENTION_DAYS          = 365;
 
@@ -73,32 +75,10 @@ function get_auth_db(): SQLite3 {
         $db->exec("CREATE INDEX IF NOT EXISTS idx_login_attempts_lookup ON login_attempts(username, created_at)");
         $db->exec("CREATE INDEX IF NOT EXISTS idx_login_attempts_ip ON login_attempts(ip, created_at)");
 
-        $db->exec("CREATE TABLE IF NOT EXISTS access_log (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            ts TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-            ip TEXT NOT NULL,
-            user_id INTEGER REFERENCES users(id),
-            username TEXT,
-            role TEXT,
-            path TEXT NOT NULL,
-            method TEXT NOT NULL,
-            query_string TEXT,
-            status_code INTEGER,
-            user_agent TEXT,
-            referer TEXT
-        )");
-        $db->exec("CREATE INDEX IF NOT EXISTS idx_access_log_ip ON access_log(ip)");
-        $db->exec("CREATE INDEX IF NOT EXISTS idx_access_log_ts ON access_log(ts)");
-        $db->exec("CREATE INDEX IF NOT EXISTS idx_access_log_path ON access_log(path)");
-        $db->exec("CREATE INDEX IF NOT EXISTS idx_access_log_user ON access_log(user_id)");
-
-        $db->exec("CREATE TABLE IF NOT EXISTS ip_geo_cache (
-            ip TEXT PRIMARY KEY,
-            country_code TEXT,
-            country_name TEXT,
-            source TEXT,
-            resolved_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
-        )");
+        // Dalle installazioni precedenti: il registro accessi e la cache della
+        // geolocalizzazione IP non esistono piu'.
+        $db->exec("DROP TABLE IF EXISTS access_log");
+        $db->exec("DROP TABLE IF EXISTS ip_geo_cache");
 
         $db->exec("CREATE TABLE IF NOT EXISTS requests (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -121,7 +101,7 @@ function get_auth_db(): SQLite3 {
             alert_type TEXT NOT NULL,
             hex TEXT,
             request_id INTEGER REFERENCES requests(id),
-            article_id INTEGER,
+            article_id INTEGER,          -- della rassegna RSS, non piu' usata: resta per i database esistenti
             title TEXT NOT NULL,
             detail TEXT,
             is_read INTEGER NOT NULL DEFAULT 0,
@@ -131,38 +111,6 @@ function get_auth_db(): SQLite3 {
         )");
         $db->exec("CREATE INDEX IF NOT EXISTS idx_alerts_created ON alerts(created_at)");
         $db->exec("CREATE INDEX IF NOT EXISTS idx_alerts_read ON alerts(is_read, created_at)");
-
-        // Migrazione one-shot: le installazioni con una tabella "alerts" creata prima
-        // dell'introduzione del sottosistema Notizie/RSS hanno ancora il vecchio CHECK
-        // sui valori di alert_type (che rifiuterebbe 'new_article') e non hanno la
-        // colonna article_id. CREATE TABLE IF NOT EXISTS non modifica una tabella già
-        // esistente, quindi va ricostruita esplicitamente — idempotente, verificato su
-        // una copia reale del database di produzione prima di essere eseguita qui.
-        $alertsSql = $db->querySingle("SELECT sql FROM sqlite_master WHERE type='table' AND name='alerts'");
-        if ($alertsSql !== null && !str_contains($alertsSql, 'article_id')) {
-            $db->exec('BEGIN');
-            $db->exec("ALTER TABLE alerts RENAME TO alerts_old_migrate");
-            $db->exec("CREATE TABLE alerts (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                alert_type TEXT NOT NULL,
-                hex TEXT,
-                request_id INTEGER REFERENCES requests(id),
-                article_id INTEGER,
-                title TEXT NOT NULL,
-                detail TEXT,
-                is_read INTEGER NOT NULL DEFAULT 0,
-                note TEXT,
-                note_updated_at TEXT,
-                note_updated_by INTEGER REFERENCES users(id)
-            )");
-            $db->exec("INSERT INTO alerts (id, created_at, alert_type, hex, request_id, article_id, title, detail, is_read, note, note_updated_at, note_updated_by)
-                SELECT id, created_at, alert_type, hex, request_id, NULL, title, detail, is_read, note, note_updated_at, note_updated_by FROM alerts_old_migrate");
-            $db->exec("DROP TABLE alerts_old_migrate");
-            $db->exec("CREATE INDEX IF NOT EXISTS idx_alerts_created ON alerts(created_at)");
-            $db->exec("CREATE INDEX IF NOT EXISTS idx_alerts_read ON alerts(is_read, created_at)");
-            $db->exec('COMMIT');
-        }
 
         // Checkpoint dello scanner cron (alert_scan.php): ultimo rowid di events.db già processato.
         $db->exec("CREATE TABLE IF NOT EXISTS alert_scan_checkpoint (
@@ -194,48 +142,66 @@ function get_auth_db(): SQLite3 {
 // Bootstrap sessione
 // ---------------------------------------------------------------------------
 
+/**
+ * Prepara autenticazione e sessione per la richiesta.
+ *
+ * La sessione e' pigra: nasce solo se il browser ne ha gia' una (cookie), su
+ * un POST, o quando una pagina chiede il gettone CSRF (csrf_token(): il login,
+ * i moduli di chi ha fatto l'accesso). Una visita anonima alla tabella o alla
+ * mappa non apre nessuna sessione e non scrive nulla: prima ogni richiesta,
+ * crawler compresi, lasciava un file di sessione.
+ */
 function auth_bootstrap(): void {
-    if (session_status() !== PHP_SESSION_ACTIVE) {
-        // Directory di sessione dedicata al progetto invece della cartella di
-        // sistema condivisa /var/lib/php/sessions (733, proprietario www-data):
-        // isola le sessioni di questa app da quelle di altri siti sullo stesso
-        // host e non dipende dai permessi/GC di sistema.
-        $sessionPath = __DIR__ . '/sessions';
-        if (!is_dir($sessionPath)) {
-            mkdir($sessionPath, 0770, true);
-        }
-        session_save_path($sessionPath);
-
-        // Garbage collection delle sessioni: da attivare ESPLICITAMENTE qui.
-        // Su Debian session.gc_probability vale 0, perché la pulizia è delegata
-        // allo script di sistema /usr/lib/php/sessionclean — che però legge la
-        // save_path dai file php.ini e quindi NON vede questa directory, scelta
-        // a runtime. Risultato senza queste righe: i file di sessione non venivano
-        // mai rimossi (5.778 file accumulati, il più vecchio di oltre due settimane)
-        // e soprattutto una sessione rubata restava valida per sempre, dato che
-        // gc_maxlifetime non veniva mai applicato da nessuno.
-        // 1 richiesta su 100 esegue la pulizia: costo trascurabile, nessun cron.
-        ini_set('session.gc_probability', '1');
-        ini_set('session.gc_divisor', '100');
-        ini_set('session.gc_maxlifetime', '43200'); // 12 ore di inattività
-        // Nome di sessione dedicato: con il PHPSESSID di default e path '/', le
-        // app che convivono su questo host condividono un unico cookie. Poiché
-        // ognuna rigenera l'id al login, accedere a una disconnetteva le altre.
-        session_name('MILAIRSESSID');
-        session_set_cookie_params([
-            'lifetime' => 0,
-            'path' => '/',
-            'secure' => true,   // il vhost forza HTTPS su tutto il sito
-            'httponly' => true,
-            'samesite' => 'Lax',
-        ]);
-        session_start();
+    if (session_status() !== PHP_SESSION_ACTIVE
+        && (isset($_COOKIE[MILAIR_SESSIONE]) || ($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST')) {
+        avvia_sessione();
     }
+    if (session_status() === PHP_SESSION_ACTIVE) {
+        get_auth_db(); // assicura che le tabelle esistano
+        revalidate_session_user();
+    }
+}
+
+const MILAIR_SESSIONE = 'MILAIRSESSID';
+
+function avvia_sessione(): void {
+    if (session_status() === PHP_SESSION_ACTIVE) {
+        return;
+    }
+    // Directory di sessione dedicata al progetto, in RAM (MILAIR_RAM): isola le
+    // sessioni di questa app da quelle di altri siti sullo stesso host e non
+    // scrive sulla SSD. Dopo un riavvio si rifa' il login, e basta.
+    $sessionPath = MILAIR_RAM . '/sessions';
+    if (!is_dir($sessionPath)) {
+        @mkdir($sessionPath, 0770, true);
+    }
+    session_save_path($sessionPath);
+
+    // Garbage collection delle sessioni: da attivare ESPLICITAMENTE qui.
+    // Su Debian session.gc_probability vale 0, perché la pulizia è delegata
+    // allo script di sistema /usr/lib/php/sessionclean — che però legge la
+    // save_path dai file php.ini e quindi NON vede questa directory, scelta
+    // a runtime. Senza queste righe i file di sessione non venivano mai
+    // rimossi, e una sessione rubata restava valida per sempre.
+    // 1 richiesta su 100 esegue la pulizia: costo trascurabile, nessun cron.
+    ini_set('session.gc_probability', '1');
+    ini_set('session.gc_divisor', '100');
+    ini_set('session.gc_maxlifetime', '43200'); // 12 ore di inattività
+    // Nome di sessione dedicato: con il PHPSESSID di default e path '/', le
+    // app che convivono su questo host condividono un unico cookie. Poiché
+    // ognuna rigenera l'id al login, accedere a una disconnetteva le altre.
+    session_name(MILAIR_SESSIONE);
+    session_set_cookie_params([
+        'lifetime' => 0,
+        'path' => '/',
+        'secure' => true,   // il vhost forza HTTPS su tutto il sito
+        'httponly' => true,
+        'samesite' => 'Lax',
+    ]);
+    session_start();
     if (empty($_SESSION['csrf_token'])) {
         $_SESSION['csrf_token'] = bin2hex(random_bytes(32));
     }
-    get_auth_db(); // assicura che le tabelle esistano
-    revalidate_session_user();
 }
 
 /**
@@ -386,6 +352,9 @@ function attempt_login(string $username, string $password): array {
 }
 
 function logout(): void {
+    if (session_status() !== PHP_SESSION_ACTIVE) {
+        return;
+    }
     $_SESSION = [];
     if (ini_get('session.use_cookies')) {
         $params = session_get_cookie_params();
@@ -463,6 +432,7 @@ function require_role(string $minRole): void {
 // ---------------------------------------------------------------------------
 
 function csrf_token(): string {
+    avvia_sessione();   // chi chiede un gettone sta per mandare un modulo
     return $_SESSION['csrf_token'] ?? '';
 }
 
@@ -500,123 +470,17 @@ function verify_password(string $plain, string $hash): bool {
     return password_verify($plain, $hash);
 }
 
-// ---------------------------------------------------------------------------
-// Logging accessi — chiamata esplicitamente dalle pagine "vere" (non dai
-// proxy tile weather_tile.php/satellite_tile.php, chiamati decine di volte
-// per singolo pan/zoom mappa: includerli intaserebbe access_log di rumore
-// e serializzerebbe le richieste dietro il lock del file di sessione).
-// ---------------------------------------------------------------------------
-
-function log_access(): void {
-    register_shutdown_function(function () {
-        try {
-            $u = current_user();
-            $stmt = get_auth_db()->prepare("INSERT INTO access_log
-                (ip, user_id, username, role, path, method, query_string, status_code, user_agent, referer)
-                VALUES (?,?,?,?,?,?,?,?,?,?)");
-            $stmt->bindValue(1, $_SERVER['REMOTE_ADDR'] ?? '');
-            $stmt->bindValue(2, $u['id'] ?? null);
-            $stmt->bindValue(3, $u['username'] ?? null);
-            $stmt->bindValue(4, current_role());
-            $stmt->bindValue(5, basename($_SERVER['SCRIPT_NAME'] ?? ''));
-            $stmt->bindValue(6, $_SERVER['REQUEST_METHOD'] ?? '');
-            $stmt->bindValue(7, $_SERVER['QUERY_STRING'] ?? '');
-            $stmt->bindValue(8, http_response_code());
-            $stmt->bindValue(9, substr($_SERVER['HTTP_USER_AGENT'] ?? '', 0, 500));
-            $stmt->bindValue(10, substr($_SERVER['HTTP_REFERER'] ?? '', 0, 500));
-            $stmt->execute();
-
-            // Retention: senza potatura queste tabelle crescono all'infinito —
-            // access_log guadagna una riga a ogni pageview e aveva già superato
-            // in dimensione events.db (3,6 MB contro 3,3 MB), pur contenendo
-            // dati di servizio e non il dominio dell'applicazione.
-            // Potatura probabilistica (1 richiesta su 500) invece di un cron:
-            // resta autonoma su qualunque deploy, senza configurazione.
-            if (random_int(1, 500) === 1) {
-                prune_old_logs();
-            }
-        } catch (Exception $e) {
-            // Un errore di logging non deve mai rompere la risposta della pagina.
-        }
-    });
-}
-
 /**
  * Elimina le righe di servizio più vecchie delle soglie di conservazione.
  * Soglie volutamente generose: sono dati di audit, meglio abbondare.
+ * La chiama alert_scan.php una volta al giorno.
  * Gli alert NON letti non vengono mai rimossi, indipendentemente dall'età:
  * sono segnalazioni che l'operatore non ha ancora visionato.
  */
 function prune_old_logs(): void {
     $db = get_auth_db();
-    $db->exec("DELETE FROM access_log     WHERE ts         < datetime('now', '-" . ACCESS_LOG_RETENTION_DAYS . " days')");
     $db->exec("DELETE FROM login_attempts WHERE created_at < datetime('now', '-" . LOGIN_ATTEMPTS_RETENTION_DAYS . " days')");
     $db->exec("DELETE FROM alerts         WHERE is_read = 1 AND created_at < datetime('now', '-" . ALERTS_RETENTION_DAYS . " days')");
-}
-
-// ---------------------------------------------------------------------------
-// Geolocalizzazione IP (risoluzione pigra, con cache — vedi geo_secrets.php)
-// ---------------------------------------------------------------------------
-
-function fetch_ip_geo_from_apis(string $ip): array {
-    if (!filter_var($ip, FILTER_VALIDATE_IP, FILTER_FLAG_NO_PRIV_RANGE | FILTER_FLAG_NO_RES_RANGE)) {
-        return ['country_code' => null, 'country_name' => null, 'source' => 'local'];
-    }
-    if (!defined('IPDATA_API_KEY') && !defined('IPGEOLOCATION_API_KEY') && file_exists(__DIR__ . '/geo_secrets.php')) {
-        require_once __DIR__ . '/geo_secrets.php';
-    }
-    $ctx = stream_context_create(['http' => ['timeout' => 6, 'ignore_errors' => true]]);
-
-    if (defined('IPDATA_API_KEY')) {
-        $resp = @file_get_contents('https://api.ipdata.co/' . urlencode($ip) . '?api-key=' . IPDATA_API_KEY, false, $ctx);
-        $data = $resp ? json_decode($resp, true) : null;
-        if (!empty($data['country_code'])) {
-            return ['country_code' => $data['country_code'], 'country_name' => $data['country_name'] ?? null, 'source' => 'ipdata'];
-        }
-    }
-    if (defined('IPGEOLOCATION_API_KEY')) {
-        $resp = @file_get_contents('https://api.ipgeolocation.io/v3/ipgeo?apiKey=' . IPGEOLOCATION_API_KEY . '&ip=' . urlencode($ip), false, $ctx);
-        $data = $resp ? json_decode($resp, true) : null;
-        $cc = $data['location']['country_code2'] ?? null;
-        if ($cc) {
-            return ['country_code' => $cc, 'country_name' => $data['location']['country_name'] ?? null, 'source' => 'ipgeolocation'];
-        }
-    }
-    return ['country_code' => null, 'country_name' => null, 'source' => 'failed'];
-}
-
-function resolve_ip_geo(string $ip): array {
-    $db = get_auth_db();
-    $stmt = $db->prepare("SELECT country_code, country_name, resolved_at FROM ip_geo_cache WHERE ip = ?");
-    $stmt->bindValue(1, $ip);
-    $row = $stmt->execute()->fetchArray(SQLITE3_ASSOC);
-    if ($row && (time() - strtotime($row['resolved_at'])) < 30 * 86400) {
-        return $row;
-    }
-
-    $geo = fetch_ip_geo_from_apis($ip);
-
-    $stmt = $db->prepare("INSERT INTO ip_geo_cache (ip, country_code, country_name, source, resolved_at)
-        VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)
-        ON CONFLICT(ip) DO UPDATE SET country_code = excluded.country_code, country_name = excluded.country_name,
-            source = excluded.source, resolved_at = CURRENT_TIMESTAMP");
-    $stmt->bindValue(1, $ip);
-    $stmt->bindValue(2, $geo['country_code']);
-    $stmt->bindValue(3, $geo['country_name']);
-    $stmt->bindValue(4, $geo['source']);
-    $stmt->execute();
-
-    return $geo;
-}
-
-/** Bandiera emoji da codice ISO alpha-2, via Regional Indicator Symbols (nessuna chiamata esterna). */
-function ipgeo_flag_emoji(?string $countryCode): string {
-    $countryCode = strtoupper(trim((string)$countryCode));
-    if (!preg_match('/^[A-Z]{2}$/', $countryCode)) {
-        return '';
-    }
-    $offset = 0x1F1E6 - 65;
-    return mb_chr(ord($countryCode[0]) + $offset, 'UTF-8') . mb_chr(ord($countryCode[1]) + $offset, 'UTF-8');
 }
 
 // ---------------------------------------------------------------------------
@@ -633,7 +497,6 @@ function render_nav(string $current = ''): void {
         'stats.php'     => '📊 Statistiche',
         'diary.php'     => '📓 Diario',
         'favorites.php' => '⭐ Favoriti',
-        'news.php'      => '📰 Notizie',
     ];
     if ($user) {
         $links['rules.php']     = '🛠️ Regole';
@@ -643,10 +506,7 @@ function render_nav(string $current = ''): void {
     }
     if ($user && $user['role'] === 'admin') {
         $links['admin_users.php']        = '👤 Utenti';
-        $links['admin_access_log.php']   = '📜 Log Accessi';
-        $links['admin_access_stats.php'] = '📊 Statistiche Accessi';
         $links['admin_richieste.php']    = '📬 Richieste';
-        $links['admin_feeds.php']        = '🗞️ Feed RSS';
     }
 
     echo '<div class="nav-links">';
@@ -685,7 +545,6 @@ function render_alert_bell(): void {
         'new_request'       => '📬',
         'emergency_squawk'  => '🚨',
         'rare_contact'      => '✨',
-        'new_article'       => '📰',
         'custom_rule'       => '🎯',
     ];
 
@@ -707,8 +566,6 @@ function render_alert_bell(): void {
             $titleHtml = $icon . ' ' . htmlspecialchars($a['title']);
             if (!empty($a['hex'])) {
                 $titleHtml = '<a href="index.php?hex=' . urlencode($a['hex']) . '&sort=ident_last_seen&order=desc" target="_blank">' . $titleHtml . '</a>';
-            } elseif (!empty($a['article_id'])) {
-                $titleHtml = '<a href="news_article.php?id=' . (int)$a['article_id'] . '" target="_blank">' . $titleHtml . '</a>';
             }
             echo '<div class="alert-title">' . $titleHtml . '</div>';
             echo '<div class="alert-meta">' . htmlspecialchars(format_date_it($a['created_at'])) . '</div>';
@@ -811,7 +668,7 @@ JS;
 /**
  * Inizio del giorno $ymd (o del successivo, con $nextDay) in ora italiana,
  * espresso in UTC nel formato di CURRENT_TIMESTAMP ("Y-m-d H:i:s"): serve per
- * filtrare per data le tabelle di auth.db (alerts, access_log), le cui date sono
+ * filtrare per data la tabella alerts di auth.db, le cui date sono
  * in UTC mentre i campi "Dal/Al" della pagina sono giorni italiani. null se la
  * data non è valida.
  */
@@ -843,15 +700,14 @@ function format_date_it(?string $utcString): string {
     }
 }
 
-function create_alert(string $type, ?string $hex, ?int $requestId, string $title, ?string $detail = null, ?int $articleId = null): int {
+function create_alert(string $type, ?string $hex, ?int $requestId, string $title, ?string $detail = null): int {
     $db = get_auth_db();
-    $stmt = $db->prepare("INSERT INTO alerts (alert_type, hex, request_id, article_id, title, detail) VALUES (?, ?, ?, ?, ?, ?)");
+    $stmt = $db->prepare("INSERT INTO alerts (alert_type, hex, request_id, title, detail) VALUES (?, ?, ?, ?, ?)");
     $stmt->bindValue(1, $type);
     $stmt->bindValue(2, $hex);
     $stmt->bindValue(3, $requestId);
-    $stmt->bindValue(4, $articleId);
-    $stmt->bindValue(5, $title);
-    $stmt->bindValue(6, $detail);
+    $stmt->bindValue(4, $title);
+    $stmt->bindValue(5, $detail);
     $stmt->execute();
     return $db->lastInsertRowID();
 }

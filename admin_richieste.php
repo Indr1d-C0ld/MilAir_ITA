@@ -1,7 +1,6 @@
 <?php
 require_once __DIR__ . '/auth.php';
 auth_bootstrap();
-log_access();
 require_role('admin');
 
 $db = get_auth_db();

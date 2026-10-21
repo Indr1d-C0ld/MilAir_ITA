@@ -1,13 +1,13 @@
 <?php
+require_once __DIR__ . '/percorsi.php';
 require_once __DIR__ . '/auth.php';
 require_once __DIR__ . '/geo_lib.php';
 auth_bootstrap();
-log_access();
 $canEdit = is_logged_in(); // Collaboratore o Admin: mostra le azioni di scrittura
 
 require_once __DIR__ . '/table_lib.php';
 
-$dbPath = __DIR__ . '/events.db';
+$dbPath = EVENTS_DB_PATH;
 
 // Parametri di filtro/ordinamento: letti e normalizzati da table_lib.php, la
 // stessa pipeline usata da export.php (pulsanti rapidi in ora italiana inclusi).
@@ -213,7 +213,6 @@ try {
         tr.mythic-row { background-color: #ffe6e6; }
         tr.mythic-row:hover td { background-color: #ffd4d4; }
         .copy-btn { text-decoration: none; margin-left: 4px; font-size: 0.9em; cursor: pointer; }
-        .anom-link { text-decoration: none; margin-left: 4px; font-size: 0.9em; }
         table a { color: #007bff; text-decoration: none; }
         table a:hover { color: #0056b3; text-decoration: none; }
         .model-silhouette { height: 18px; width: auto; vertical-align: middle; margin-right: 4px; }
@@ -479,8 +478,10 @@ try {
     </div>
 
     <div style="margin: 10px 0; display:flex; align-items:center; flex-wrap:wrap; gap:10px;">
-        <a href="export.php?format=csv&<?= http_build_query($_GET) ?>" class="btn">Esporta CSV</a>
-        <a href="export.php?format=pdf&<?= http_build_query($_GET) ?>" target="_blank" class="btn">Versione stampabile</a>
+        <?php if ($canEdit): /* l'export ricalcola tutta la tabella: solo dopo il login */ ?>
+        <a href="export.php?format=csv&<?= http_build_query($_GET) ?>" class="btn" rel="nofollow">Esporta CSV</a>
+        <a href="export.php?format=pdf&<?= http_build_query($_GET) ?>" target="_blank" class="btn" rel="nofollow">Versione stampabile</a>
+        <?php endif; ?>
         <a href="?<?= http_build_query(array_merge($_GET, ['dateview' => $dateView === 'extended' ? 'compact' : 'extended'])) ?>" class="btn" title="Mostra/nascondi separatamente primo e ultimo avvistamento per identità e per hex">
             <?= $dateView === 'extended' ? '📅 Colonne data compatte' : '📅 Separa colonne data' ?>
         </a>
@@ -572,11 +573,6 @@ try {
             <tr class="<?= $trClass ?>"<?= $trStyle ?>>
                 <td>
                     <a href="https://www.flightdb.net/aircraft.php?modes=<?= urlencode($row['hex']) ?>" target="_blank" title="Apri scheda FlightDB"><?= htmlspecialchars($row['hex']) ?></a>
-                    <?php if (!empty($row['hex'])): ?>
-                        <?php /* URL root-relative: Flight Anomaly Monitor e' servito dallo
-                                 stesso vhost, cosi' il codice non e' legato a un hostname. */ ?>
-                        <a href="/flight_anom/?event_type=&hex=<?= urlencode($row['hex']) ?>&callsign=&date_from=&date_to=&sort=date&dir=DESC&page=1" target="_blank" title="Cerca anomalie per HEX" class="anom-link">🔍</a>
-                    <?php endif; ?>
                     <a href="#" onclick="copyToClipboard('<?= htmlspecialchars($row['hex'], ENT_QUOTES) ?>'); return false;" title="Copia HEX" class="copy-btn">📋</a>
                     <?php if ($row['is_new_today']): ?>
                         <span title="Nuovo oggi">💡</span>

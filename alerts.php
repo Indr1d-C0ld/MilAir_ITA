@@ -1,7 +1,6 @@
 <?php
 require_once __DIR__ . '/auth.php';
 auth_bootstrap();
-log_access();
 require_role('collaboratore');
 
 $db = get_auth_db();
@@ -49,7 +48,7 @@ $baseParams = array_intersect_key($_GET, array_flip(['type', 'read', 'date_from'
 
 $where = [];
 $params = [];
-if (in_array($typeFilter, ['watchlist', 'new_request', 'emergency_squawk', 'rare_contact', 'new_article', 'custom_rule'], true)) {
+if (in_array($typeFilter, ['watchlist', 'new_request', 'emergency_squawk', 'rare_contact', 'custom_rule'], true)) {
     $where[] = 'alert_type = :type';
     $params[':type'] = $typeFilter;
 }
@@ -98,7 +97,6 @@ $typeLabels = [
     'new_request'      => '📬 Nuova richiesta',
     'emergency_squawk' => '🚨 Squawk emergenza',
     'rare_contact'     => '✨ Contatto raro',
-    'new_article'      => '📰 Nuovo articolo',
     'custom_rule'      => '🎯 Regola personalizzata',
 ];
 

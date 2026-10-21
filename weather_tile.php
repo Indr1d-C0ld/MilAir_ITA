@@ -1,4 +1,5 @@
 <?php
+require_once __DIR__ . '/percorsi.php';
 // Proxy per le tile meteo OpenWeather: nasconde la API key lato server e mette in
 // cache su disco per non consumare quota ad ogni richiesta (le mappe OpenWeather si
 // aggiornano circa ogni 10 minuti, non serve rinfrescare più spesso).
@@ -18,7 +19,7 @@ if ($z < 0 || $z > 18 || $x < 0 || $y < 0) {
     exit;
 }
 
-$cacheDir = __DIR__ . "/cache/weather/$layer/$z/$x";
+$cacheDir = MILAIR_RAM . "/cache/weather/$layer/$z/$x";
 $cacheFile = "$cacheDir/$y.png";
 $maxAge = 600; // 10 minuti
 
@@ -47,7 +48,7 @@ if (!tile_rate_ok('weather', 1500)) {
  */
 function tile_rate_ok(string $bucket, int $maxPerHour): bool {
     $ip = $_SERVER['REMOTE_ADDR'] ?? 'unknown';
-    $dir = __DIR__ . '/cache/ratelimit';
+    $dir = MILAIR_RAM . '/cache/ratelimit';
     if (!is_dir($dir) && !@mkdir($dir, 0775, true)) {
         return true; // in caso di problemi sul filesystem non blocchiamo il servizio
     }
@@ -83,7 +84,7 @@ function tile_cache_evict(string $subdir, int $olderThan = 604800): void {
     if (random_int(1, 500) !== 1) {
         return;
     }
-    $root = __DIR__ . '/cache/' . $subdir;
+    $root = MILAIR_RAM . '/cache/' . $subdir;
     if (!is_dir($root)) {
         return;
     }

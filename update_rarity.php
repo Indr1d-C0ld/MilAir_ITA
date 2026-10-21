@@ -1,9 +1,11 @@
 #!/usr/bin/env php
 <?php
+require_once __DIR__ . '/percorsi.php';
 if (php_sapi_name() !== 'cli') { http_response_code(403); exit; }
 
 /**
- * Ricalcola la cache di rarità (rarity_cache), eseguito ogni ora via cron.
+ * Ricalcola la cache di rarità (rarity_cache). La lancia flight_mil_ita.py
+ * ogni volta che registra contatti nuovi; si puo' lanciare anche a mano.
  *
  * Sistema di rarità composita, ispirato ai loot table dei GdR: a differenza
  * di un vero drop table (dove la rarità è una regola fissa decisa a monte),
@@ -36,13 +38,13 @@ if (php_sapi_name() !== 'cli') { http_response_code(403); exit; }
 
 require_once __DIR__ . '/geo_lib.php';
 
-$dbPath = __DIR__ . '/events.db';
+$dbPath = EVENTS_DB_PATH;
 $db = new SQLite3($dbPath);
 $db->enableExceptions(true);
-// events.db non usa WAL (scelta deliberata, vedi fix_permissions.sh) e questo
-// script è, con csv_to_db.py (ogni 5 min), l'unico altro SCRITTORE del database:
-// la ricostruzione della cache è una transazione lunga (DELETE + ~750 INSERT)
-// che collide regolarmente con l'import.
+// events.db non usa WAL (scelta deliberata: lo scrivono sia il logger sia
+// Apache, e i file -wal/-shm resterebbero con il proprietario sbagliato).
+// Storicamente la ricostruzione della cache (DELETE + ~750 INSERT) collideva
+// con l'import del CSV, che girava alla stessa ora.
 //
 // Storia del problema: senza busyTimeout falliva il 73% delle esecuzioni orarie;
 // con busyTimeout(5000) + "BEGIN TRANSACTION" falliva ancora il 56% (165 successi
@@ -130,36 +132,58 @@ function rarityTier($score) {
     return 'Common';
 }
 
-// Scrittura in transazione, con ritentativi: se l'import (csv_to_db.py) sta
-// scrivendo proprio adesso, aspettare e riprovare è preferibile sia a fallire
-// con un fatal error (che lasciava la cache non aggiornata per un'ora intera)
-// sia a lasciare la vecchia cache senza dirlo. La cache viene comunque
-// rigenerata per intero al tentativo successivo: nessun rischio di stato parziale.
+// La cache nuova, calcolata in memoria; poi si scrive SOLO cio' che e' cambiato.
+// Prima si cancellava e si reinseriva l'intera tabella ogni ora, anche quando
+// nessun contatto nuovo era arrivato: ~1.000 righe riscritte a vuoto. La
+// rarita' dipende solo dai conteggi degli avvistamenti, quindi cambia solo
+// quando il logger registra qualcosa (ed e' il logger a lanciare questo script).
 $tierCounts = ['Mythic' => 0, 'Legendary' => 0, 'Epic' => 0, 'Rare' => 0, 'Uncommon' => 0, 'Common' => 0];
-$maxAttempts = 3;
+$nuova = [];
+foreach ($rows as $r) {
+    $scPts = rarityPoints((int)$r['seen_count']);
+    // Operatore non derivabile dal callsign (es. nomignoli di reparto irregolari): punteggio
+    // neutro (metà scala), per non premiare né penalizzare un formato di callsign atipico.
+    $opPts = $r['op'] !== null ? rarityPoints($operatorCounts[$r['op']]) : 2.5;
+    $ccPts = rarityPoints($countryCounts[$r['cc']]);
 
+    $composite = (int) round($scPts * 2 + $opPts + $ccPts);
+    $tier = rarityTier($composite);
+    $tierCounts[$tier]++;
+    $nuova[$r['hex']] = [(int)$r['seen_count'], $tier, $composite];
+}
+
+$vecchia = [];
+$res = $db->query("SELECT hex, seen_count, rarity, composite_score FROM rarity_cache");
+while ($v = $res->fetchArray(SQLITE3_ASSOC)) {
+    $vecchia[$v['hex']] = [(int)$v['seen_count'], $v['rarity'], (int)$v['composite_score']];
+}
+$res->finalize();   // niente lettura aperta mentre si chiede il lock di scrittura
+$cambiate = array_filter($nuova, fn($v, $hex) => ($vecchia[$hex] ?? null) !== $v, ARRAY_FILTER_USE_BOTH);
+$tolte = array_diff_key($vecchia, $nuova);
+
+if (!$cambiate && !$tolte) {
+    exit(0);   // niente da scrivere, niente da dire
+}
+
+// Scrittura in transazione, con ritentativi: se il logger o una pagina web
+// stanno scrivendo proprio adesso, aspettare e riprovare è preferibile sia a
+// fallire sia a lasciare la vecchia cache senza dirlo.
+$maxAttempts = 3;
 for ($attempt = 1; $attempt <= $maxAttempts; $attempt++) {
-    $tierCounts = array_fill_keys(array_keys($tierCounts), 0);
     try {
         // BEGIN IMMEDIATE (non DEFERRED): acquisisce subito il lock di scrittura,
         // l'unico punto in cui busyTimeout viene effettivamente rispettato.
         $db->exec("BEGIN IMMEDIATE");
-        $db->exec("DELETE FROM rarity_cache");
-        $stmt = $db->prepare("INSERT INTO rarity_cache (hex, seen_count, rarity, composite_score) VALUES (?, ?, ?, ?)");
-
-        foreach ($rows as $r) {
-            $scPts = rarityPoints((int)$r['seen_count']);
-            // Operatore non derivabile dal callsign (es. nomignoli di reparto irregolari): punteggio
-            // neutro (metà scala), per non premiare né penalizzare un formato di callsign atipico.
-            $opPts = $r['op'] !== null ? rarityPoints($operatorCounts[$r['op']]) : 2.5;
-            $ccPts = rarityPoints($countryCounts[$r['cc']]);
-
-            $composite = (int) round($scPts * 2 + $opPts + $ccPts);
-            $tier = rarityTier($composite);
-            $tierCounts[$tier]++;
-
-            $stmt->bindValue(1, $r['hex'], SQLITE3_TEXT);
-            $stmt->bindValue(2, $r['seen_count'], SQLITE3_INTEGER);
+        $del = $db->prepare("DELETE FROM rarity_cache WHERE hex = ?");
+        foreach (array_keys($tolte) as $hex) {
+            $del->bindValue(1, $hex, SQLITE3_TEXT);
+            $del->execute();
+            $del->reset();
+        }
+        $stmt = $db->prepare("INSERT OR REPLACE INTO rarity_cache (hex, seen_count, rarity, composite_score) VALUES (?, ?, ?, ?)");
+        foreach ($cambiate as $hex => [$seen, $tier, $composite]) {
+            $stmt->bindValue(1, $hex, SQLITE3_TEXT);
+            $stmt->bindValue(2, $seen, SQLITE3_INTEGER);
             $stmt->bindValue(3, $tier, SQLITE3_TEXT);
             $stmt->bindValue(4, $composite, SQLITE3_INTEGER);
             $stmt->execute();
@@ -172,7 +196,6 @@ for ($attempt = 1; $attempt <= $maxAttempts; $attempt++) {
         // "cannot rollback - no transaction is active" (caso tipico quando è
         // stato proprio il BEGIN a fallire) lancerebbe una NUOVA eccezione,
         // che sfuggirebbe a questo catch mascherando l'errore originale.
-        // L'operatore @ non basta: sopprime i warning, non le eccezioni.
         try { $db->exec("ROLLBACK"); } catch (Exception $ignored) {}
         if ($attempt < $maxAttempts) {
             sleep(5 * $attempt); // backoff: 5s, poi 10s
@@ -185,8 +208,5 @@ for ($attempt = 1; $attempt <= $maxAttempts; $attempt++) {
 }
 
 $count = array_sum($tierCounts);
-echo "Cache rarità aggiornata: $count hex classificati.\n";
-foreach ($tierCounts as $tier => $n) {
-    $pct = $count > 0 ? round($n / $count * 100, 1) : 0;
-    echo "  $tier: $n ($pct%)\n";
-}
+echo date('Y-m-d H:i:s') . " Rarità: " . count($cambiate) . " hex cambiati, " . count($tolte) . " tolti, $count classificati ("
+    . implode(', ', array_map(fn($t, $n) => "$t $n", array_keys($tierCounts), $tierCounts)) . ").\n";

@@ -1,5 +1,6 @@
 #!/usr/bin/env php
 <?php
+require_once __DIR__ . '/percorsi.php';
 // diary_build.php - calcola (e, con --publish, pubblica) il digest del Diario
 // per uno o più giorni. Pensato per il cron: una riga al giorno costruisce e
 // pubblica la voce di IERI. Non tocca la sintesi IA (resta manuale).
@@ -59,7 +60,7 @@ if (isset($opts['day'])) {
 }
 
 // --- Elaborazione ------------------------------------------------------------
-$dbPath = __DIR__ . '/events.db';
+$dbPath = EVENTS_DB_PATH;
 try {
     $db = new SQLite3($dbPath);
     $db->enableExceptions(true);
@@ -99,6 +100,16 @@ foreach ($days as $day) {
         $errors++;
         fwrite(STDERR, "diary_build: errore su {$day}: " . $e->getMessage() . "\n");
     }
+}
+
+// La potatura dei dati di servizio di auth.db (tentativi di login, alert gia'
+// letti oltre la soglia): una volta per notte basta. Prima la faceva una
+// richiesta web su 500, ora che il registro di ogni richiesta non c'e' piu'.
+try {
+    require_once __DIR__ . '/auth.php';
+    prune_old_logs();
+} catch (Throwable $e) {
+    fwrite(STDERR, 'diary_build: potatura di auth.db non riuscita: ' . $e->getMessage() . "\n");
 }
 
 exit($errors ? 1 : 0);

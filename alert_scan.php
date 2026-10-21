@@ -1,5 +1,6 @@
 #!/usr/bin/env php
 <?php
+require_once __DIR__ . '/percorsi.php';
 if (php_sapi_name() !== 'cli') { http_response_code(403); exit; }
 
 /**
@@ -10,8 +11,8 @@ if (php_sapi_name() !== 'cli') { http_response_code(403); exit; }
  * corrispondenze con le regole di notifica personalizzate (rules.php) — utili
  * per essere avvertiti su contatti attesi ma non ancora presenti in database.
  *
- * Da eseguire via cron (vedi crontab.txt) — non installa da sé la voce di
- * crontab, va aggiunta manualmente al crontab reale del sistema.
+ * Lo lancia flight_mil_ita.py dopo ogni registrazione di contatti nuovi (e
+ * dopo update_rarity.php): non serve un cron. Si puo' lanciare anche a mano.
  */
 
 // Una sola esecuzione alla volta: se una scansione dura più di 5 minuti (database
@@ -35,11 +36,12 @@ $emergencySquawks = [
     '7700' => 'Emergenza generale',
 ];
 
-$eventsDb = new SQLite3(__DIR__ . '/events.db', SQLITE3_OPEN_READONLY);
+$eventsDb = new SQLite3(EVENTS_DB_PATH, SQLITE3_OPEN_READONLY);
 $eventsDb->enableExceptions(true);
 $eventsDb->busyTimeout(5000);
 
 $authDb = get_auth_db();
+$primoAlert = (int)$authDb->querySingle("SELECT COALESCE(MAX(id), 0) FROM alerts");
 function hexLabel(SQLite3 $eventsDb, string $hex): string {
     $stmt = $eventsDb->prepare("SELECT callsign, reg, model_t FROM aircraft WHERE hex = ?");
     $stmt->bindValue(1, $hex);
@@ -187,4 +189,9 @@ if ($maxRowidSeen > $lastRowid) {
     $stmt->execute();
 }
 
-echo "Scansione completata: {$newCount} nuovi eventi processati, checkpoint a rowid {$maxRowidSeen}.\n";
+// Parla solo se ha creato qualcosa: il logger che la lancia ha gia' detto
+// quanti contatti ha registrato.
+$creati = (int)$authDb->querySingle("SELECT COUNT(*) FROM alerts WHERE id > $primoAlert");
+if ($creati > 0) {
+    echo "Alert: {$creati} nuovi su {$newCount} eventi esaminati.\n";
+}

@@ -1,12 +1,12 @@
 <?php
+require_once __DIR__ . '/percorsi.php';
 // Salva correzioni manuali dell'analista (reg/callsign/model_t) e/o carica manualmente
 // una foto per un contatto identificato solo parzialmente, senza attendere il ciclo
 // di scraping automatico. Risponde in JSON (chiamato via fetch da index.php).
 require_once __DIR__ . '/auth.php';
 auth_bootstrap();
-log_access();
 
-$dbPath = __DIR__ . '/events.db';
+$dbPath = EVENTS_DB_PATH;
 
 header('Content-Type: application/json; charset=utf-8');
 

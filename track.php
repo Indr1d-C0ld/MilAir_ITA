@@ -1,10 +1,11 @@
 <?php
+require_once __DIR__ . '/percorsi.php';
 // Restituisce in JSON la traccia storica (posizioni successive) di un singolo hex,
 // usata dalla mappa (map.php) per disegnare il percorso on-demand di un aeromobile.
 require_once __DIR__ . '/auth.php';
 auth_bootstrap();
 
-$dbPath = __DIR__ . '/events.db';
+$dbPath = EVENTS_DB_PATH;
 $db = new SQLite3($dbPath, SQLITE3_OPEN_READONLY);
 $db->enableExceptions(true);
 $db->busyTimeout(5000);

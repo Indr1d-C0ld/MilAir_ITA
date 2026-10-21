@@ -1,9 +1,9 @@
 <?php
+require_once __DIR__ . '/percorsi.php';
 require_once __DIR__ . '/auth.php';
 auth_bootstrap();
-log_access();
 
-$dbPath = __DIR__ . '/events.db';
+$dbPath = EVENTS_DB_PATH;
 $db = new SQLite3($dbPath, SQLITE3_OPEN_READONLY);
 $db->busyTimeout(5000);
 

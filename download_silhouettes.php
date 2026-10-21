@@ -1,5 +1,6 @@
 #!/usr/bin/env php
 <?php
+require_once __DIR__ . '/percorsi.php';
 if (php_sapi_name() !== 'cli') { http_response_code(403); exit; }
 
 /**
@@ -7,7 +8,7 @@ if (php_sapi_name() !== 'cli') { http_response_code(403); exit; }
  * Da eseguire via cron.
  */
 
-$dbPath = __DIR__ . '/events.db';
+$dbPath = EVENTS_DB_PATH;
 $silhouetteDir = __DIR__ . '/silhouettes';
 
 // Crea la directory se non esiste
