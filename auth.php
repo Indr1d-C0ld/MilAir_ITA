@@ -146,14 +146,22 @@ function get_auth_db(): SQLite3 {
  * Prepara autenticazione e sessione per la richiesta.
  *
  * La sessione e' pigra: nasce solo se il browser ne ha gia' una (cookie), su
- * un POST, o quando una pagina chiede il gettone CSRF (csrf_token(): il login,
- * i moduli di chi ha fatto l'accesso). Una visita anonima alla tabella o alla
- * mappa non apre nessuna sessione e non scrive nulla: prima ogni richiesta,
- * crawler compresi, lasciava un file di sessione.
+ * un POST, o sulle pagine con un modulo aperto anche a chi non ha fatto
+ * l'accesso (PAGINE_CON_MODULO: il login, le richieste, il primo avvio). Una
+ * visita anonima alla tabella o alla mappa non apre nessuna sessione e non
+ * scrive nulla: prima ogni richiesta, crawler compresi, lasciava un file di
+ * sessione.
+ *
+ * La sessione va aperta QUI, prima di qualunque output: a pagina iniziata le
+ * intestazioni sono gia' partite e il cookie non si puo' piu' mandare.
  */
+const PAGINE_CON_MODULO = ['login.php', 'richieste.php', 'setup.php'];
+
 function auth_bootstrap(): void {
     if (session_status() !== PHP_SESSION_ACTIVE
-        && (isset($_COOKIE[MILAIR_SESSIONE]) || ($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST')) {
+        && (isset($_COOKIE[MILAIR_SESSIONE])
+            || ($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST'
+            || in_array(basename($_SERVER['SCRIPT_NAME'] ?? ''), PAGINE_CON_MODULO, true))) {
         avvia_sessione();
     }
     if (session_status() === PHP_SESSION_ACTIVE) {
@@ -166,6 +174,11 @@ const MILAIR_SESSIONE = 'MILAIRSESSID';
 
 function avvia_sessione(): void {
     if (session_status() === PHP_SESSION_ACTIVE) {
+        return;
+    }
+    if (headers_sent($file, $riga)) {
+        // Troppo tardi per il cookie: la pagina va aggiunta a PAGINE_CON_MODULO
+        error_log("MilAir: sessione chiesta dopo l'inizio della pagina ($file:$riga)");
         return;
     }
     // Directory di sessione dedicata al progetto, in RAM (MILAIR_RAM): isola le
@@ -432,7 +445,7 @@ function require_role(string $minRole): void {
 // ---------------------------------------------------------------------------
 
 function csrf_token(): string {
-    avvia_sessione();   // chi chiede un gettone sta per mandare un modulo
+    avvia_sessione();   // di solito gia' aperta da auth_bootstrap(), vedi PAGINE_CON_MODULO
     return $_SESSION['csrf_token'] ?? '';
 }
 
