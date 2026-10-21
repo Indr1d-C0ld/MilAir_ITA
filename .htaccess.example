@@ -46,7 +46,11 @@
     # Niente indicizzazione: le combinazioni di filtri e ordinamenti della
     # tabella sono infinite, e i crawler le percorrevano tutte (centinaia di
     # migliaia di richieste al mese, ognuna con la tabella da ricalcolare).
-    Header always set X-Robots-Tag "noindex, nofollow"
+    # noindex solo con parametri: la home, la mappa, le statistiche e il diario
+    # restano indicizzabili
+    <If "%{QUERY_STRING} != ''">
+        Header always set X-Robots-Tag "noindex, nofollow"
+    </If>
 </IfModule>
 
 # Nega l'accesso diretto ai file contenenti le API key (mai serviti al browser,
