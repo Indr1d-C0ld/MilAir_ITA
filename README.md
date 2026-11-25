@@ -15,6 +15,7 @@ Il progetto è nato come strumento "per aeroappassionati" (spotting/monitoraggio
 - [Come funziona](#come-funziona)
 - [Funzionalità principali](#funzionalità-principali)
 - [Architettura](#architettura)
+- [App Android](#app-android)
 - [Struttura del progetto](#struttura-del-progetto)
 - [Requisiti](#requisiti)
 - [Installazione](#installazione)
@@ -49,6 +50,10 @@ Fino all'ottobre 2026 i contatti passavano da un CSV (`mil.csv`) che `csv_to_db.
 - **Diario di bordo** ([`diary.php`](diary.php)): una sintesi giornaliera deterministica dei contatti (per ora, per operatore/nazionalità/modello, mezzi ricorrenti, contatti rari, squawk di emergenza, novità rispetto ai 14 giorni precedenti). Con [`diary_build.php`](diary_build.php) (cron notturno) la voce di ieri viene calcolata e **pubblicata automaticamente**; senza cron resta calcolabile e pubblicabile a mano dall'admin. Pubblica in lettura solo per i giorni effettivamente pubblicati. Supporta opzionalmente una sintesi narrativa generata da un assistente IA in esecuzione su un server [Ollama](https://ollama.com) nella propria rete locale ([`ai_lib.php`](ai_lib.php), mai un servizio cloud, sempre un passo manuale): la bozza generata va sempre rivista da un operatore.
 - **Gestione utenti multi-ruolo** ([`admin_users.php`](admin_users.php)) e un modulo di richiesta accesso pubblico con approvazione manuale da parte di un admin ([`richieste.php`](richieste.php) → [`admin_richieste.php`](admin_richieste.php)). Nessun registro di ogni richiesta nel database: le visite si leggono dai log del server web.
 - **Export dati** (dopo il login): [`export.php`](export.php) esporta in CSV (o in versione stampabile/PDF dal browser) esattamente le righe che la tabella mostra con gli stessi parametri — filtri, pulsanti rapidi, correzioni manuali, note automatiche e ordinamento, senza paginazione — perché tabella ed export condividono la stessa pipeline ([`table_lib.php`](table_lib.php)); [`export_rules.php`](export_rules.php) esporta le regole in JSON (reimportabili da `rules.php`).
+
+## App Android
+
+Nella cartella [`android/`](android/) c'è un'app per telefono e tablet Android ([`MilAir_ITA-Android-1.1.apk`](android/MilAir_ITA-Android-1.1.apk)) che usa le pagine di un'installazione esistente aggiungendo navigazione nativa, doppio pannello tabella + mappa sui tablet, notifiche degli alert in background, ricerca rapida e modalità monitor. Non richiede modifiche al server: si inserisce l'indirizzo della propria installazione al primo avvio. Dettagli e screenshot nel [README dell'app](android/README.md).
 
 ## Architettura
 
@@ -109,7 +114,8 @@ Tutti e due vengono creati automaticamente (schema `CREATE TABLE IF NOT EXISTS`)
 ├── fonts/                                                   → JetBrains Mono ridotto ai caratteri latini (woff2), per i dati
 ├── leaflet/                                                 → libreria Leaflet + plugin (draw, heat), self-hosted
 ├── flags/                                                   → set di bandiere SVG per codice ISO (nazionalità)
-└── polygons.json                                            → confini Italia (Natural Earth, per il geofiltro)
+├── polygons.json                                            → confini Italia (Natural Earth, per il geofiltro)
+└── android/                                                 → app Android (APK pronto da installare, README, screenshot)
 ```
 
 Le seguenti cartelle **non sono nel repository** (create automaticamente, vedi `.gitignore`): `drawings/`, `fdbphotos/`, `photos/`, `silhouettes/`, `opflags/`, oltre a `*.db` e `*.log`; sessioni e cache stanno in `MILAIR_RAM`.
